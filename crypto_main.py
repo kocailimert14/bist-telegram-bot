@@ -24,51 +24,57 @@ COINS = [
 ]
 
 TIMEFRAMES = [
-    ("15m", "15 Dakika (15m)", "15"),
-    ("1h",  "1 Saat (1h)",      "60"),
-    ("4h",  "4 Saat (4h)",      "240"),
-    ("1d",  "Günlük (1D)",      "D")
+    ("15m", "15 Dakika (15m)"),
+    ("1h",  "1 Saat (1h)"),
+    ("4h",  "4 Saat (4h)"),
+    ("1d",  "Günlük (1D)")
 ]
 
 def send_telegram(message: str):
-    """Telegram'a bildirim gönderir."""
+    """Telegram'a HTML formatında garantili bildirim gönderir."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID, 
         "text": message, 
-        "parse_mode": "Markdown"
+        "parse_mode": "HTML"
     }
     try:
         res = requests.post(url, json=payload, timeout=15)
         if res.status_code == 200:
             print("Telegram bildirimi iletildi.")
         else:
-            print(f"Telegram hatası: {res.text}")
+            print(f"Telegram hatası ({res.status_code}): {res.text}")
     except Exception as e:
         print(f"Telegram bağlantı hatası: {e}")
 
-def get_crypto_klines(symbol: str, interval_code: str) -> pd.DataFrame:
-    """Bybit Spot ve Linear API üzerinden kline çeker."""
-    url_spot = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={interval_code}&limit=100"
+def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
+    """Binance resmi engelsiz sunucusu üzerinden TradingView ile birebir mumları çeker."""
+    # 1. Binance Engellenmeyen Resmi Veri Sunucusu
+    url_binance = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=100"
     try:
-        res = requests.get(url_spot, timeout=8)
+        res = requests.get(url_binance, timeout=8)
         if res.status_code == 200:
-            raw_list = res.json().get('result', {}).get('list', [])
-            if raw_list and len(raw_list) >= 20:
-                raw_list = raw_list[::-1]
-                df = pd.DataFrame(raw_list, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'turn'])
+            data = res.json()
+            if isinstance(data, list) and len(data) >= 20:
+                df = pd.DataFrame(data, columns=[
+                    'time', 'Open', 'High', 'Low', 'Close', 'Volume', 
+                    'close_time', 'qav', 'num_trades', 'tbv', 'tqv', 'ignore'
+                ])
                 df['Open'] = df['Open'].astype(float)
                 df['High'] = df['High'].astype(float)
                 df['Low'] = df['Low'].astype(float)
                 df['Close'] = df['Close'].astype(float)
-                df.index = pd.to_datetime(df['time'].astype(np.int64), unit='ms') + pd.Timedelta(hours=3)
+                df.index = pd.to_datetime(df['time'], unit='ms') + pd.Timedelta(hours=3)
                 return df
     except Exception:
         pass
 
-    url_linear = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval={interval_code}&limit=100"
+    # 2. Yedek: Bybit (Binance'te listelenmemiş koinler varsa devreye girer)
+    interval_map = {"15m": "15", "1h": "60", "4h": "240", "1d": "D"}
+    bb_int = interval_map.get(interval, "60")
+    url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={bb_int}&limit=100"
     try:
-        res = requests.get(url_linear, timeout=8)
+        res = requests.get(url_bybit, timeout=8)
         if res.status_code == 200:
             raw_list = res.json().get('result', {}).get('list', [])
             if raw_list and len(raw_list) >= 20:
@@ -97,7 +103,7 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
 def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     """TradingView Evan Cabral Oscillators (ECO) formülü."""
     if df is None or df.empty or len(df) < 20:
-        return None
+        return []
 
     high = df['High'].squeeze()
     low = df['Low'].squeeze()
@@ -133,57 +139,58 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Kesişim şartları
+    # Pine script kesişim şartları
     cross_up = (stoch.shift(1) < 10) & (stoch > 10)
     cross_down = (stoch.shift(1) > 90) & (stoch < 90)
 
-    target_idx = None
-    sig_type = None
+    # 15m için son 4 muma bakarak son 1 saatteki hiçbir sinyali kaçırmaz
+    check_indices = [-1, -2, -3, -4] if "15" in tf_label else [-1, -2]
+    
+    signals = []
+    coin_name = symbol.replace("USDT", "")
 
-    if cross_up.iloc[-1]:
-        target_idx = -1
-        sig_type = "BUY"
-    elif cross_down.iloc[-1]:
-        target_idx = -1
-        sig_type = "SELL"
-    elif cross_up.iloc[-2]:
-        target_idx = -2
-        sig_type = "BUY"
-    elif cross_down.iloc[-2]:
-        target_idx = -2
-        sig_type = "SELL"
+    for idx in check_indices:
+        if abs(idx) > len(df):
+            continue
+        
+        sig_type = None
+        if cross_up.iloc[idx]:
+            sig_type = "BUY"
+        elif cross_down.iloc[idx]:
+            sig_type = "SELL"
 
-    if sig_type is not None:
-        candle_time = df.index[target_idx]
-        candle_price = float(close.iloc[target_idx])
-        c_st = float(stoch.iloc[target_idx])
-        p_st = float(stoch.iloc[target_idx - 1])
-        time_str = candle_time.strftime('%d.%m.%Y') if "Günlük" in tf_label else candle_time.strftime('%H:%M')
-        coin_name = symbol.replace("USDT", "")
+        if sig_type is not None:
+            candle_time = df.index[idx]
+            candle_price = float(close.iloc[idx])
+            c_st = float(stoch.iloc[idx])
+            p_st = float(stoch.iloc[idx - 1])
+            time_str = candle_time.strftime('%d.%m.%Y') if "Günlük" in tf_label else candle_time.strftime('%H:%M')
 
-        tag = "🟢 *KRİPTO AL SİNYALİ*" if sig_type == "BUY" else "🔴 *KRİPTO SAT SİNYALİ*"
-        trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
+            tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
+            trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
 
-        return (
-            f"{tag} *(Evan Cabral - ECO)*\n\n"
-            f"🪙 *Koin:* #{coin_name}/USDT\n"
-            f"⏱ *Zaman Dilimi:* `{tf_label}`\n"
-            f"🕒 *Mum Saati:* `{time_str}` (TSİ)\n"
-            f"💵 *Sinyal Fiyatı:* ${candle_price:,.4f}\n"
-            f"📊 *DMI-Stoch:* {c_st:.1f} (Önceki: {p_st:.1f})\n"
-            f"🎯 *Tetikleyici:* DMI-Stoch {trigger}."
-        )
+            msg = (
+                f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
+                f"🪙 <b>Koin:</b> #{coin_name}/USDT\n"
+                f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
+                f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
+                f"💵 <b>Sinyal Fiyatı:</b> ${candle_price:,.4f}\n"
+                f"📊 <b>DMI-Stoch:</b> {c_st:.1f} (Önceki: {p_st:.1f})\n"
+                f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}."
+            )
+            signals.append(msg)
+            break
 
-    return None
+    return signals
 
 def scan_single_coin(symbol: str):
     """Tek bir koin için 4 periyodu tarar."""
     found_signals = []
-    for tf_key, label, code in TIMEFRAMES:
-        df = get_crypto_klines(symbol, code)
-        sig = evaluate_eco_crypto(df, symbol, label)
-        if sig:
-            found_signals.append(sig)
+    for tf_key, label in TIMEFRAMES:
+        df = get_binance_klines(symbol, tf_key)
+        sigs = evaluate_eco_crypto(df, symbol, label)
+        if sigs:
+            found_signals.extend(sigs)
     return found_signals
 
 def main():
@@ -199,7 +206,7 @@ def main():
                     send_telegram(msg)
                     toplam += 1
 
-    print(f"Tarama bitti! Üretilen sinyal sayısı: {toplam}")
+    print(f"Tarama bitti! Üretilen toplam sinyal sayısı: {toplam}")
 
 if __name__ == "__main__":
     main()
