@@ -30,19 +30,18 @@ def get_all_bist_tickers():
         data = res.json()
         tickers = [item["d"][0] + ".IS" for item in data.get("data", []) if "d" in item and len(item["d"]) > 0]
         if len(tickers) > 50:
-            print(f"Toplam {len(tickers)} adet BIST hissesi listelendi.")
             return tickers
     except Exception as e:
-        print(f"Dinamik liste çekilemedi ({e}), geniş yedek liste kullanılıyor.")
+        print(f"Dinamik liste hatası: {e}")
 
-    # Yedek Geniş BIST Listesi
+    # Yedek Geniş Liste
     return [
         "THYAO.IS", "ASELS.IS", "EREGL.IS", "KCHOL.IS", "TUPRS.IS", "GARAN.IS", 
         "AKBNK.IS", "YKBNK.IS", "ISCTR.IS", "BIMAS.IS", "SISE.IS",  "SAHOL.IS", 
         "FROTO.IS", "TOASO.IS", "ENKAI.IS", "PGSUS.IS", "KOZAL.IS", "PETKM.IS", 
         "EKGYO.IS", "HEKTS.IS", "SASA.IS",  "ASTOR.IS", "ALARK.IS", "ARCLK.IS", 
-        "GUBRF.IS", "KRDMD.IS", "ODAS.IS",  "OYAKC.IS", "SOKM.IS",  "TAVHL.IS", 
-        "TKFEN.IS", "TTKOM.IS", "TCELL.IS", "VESTL.IS", "MGROS.IS", "KONTR.IS"
+        "GUBRF.IS", "KRDMD.IS", "ODAS.IS",  "OYAKC.IS", "SOKM.IS",  "TAVHL.IS",
+        "PKART.IS", "TKFEN.IS", "TTKOM.IS", "TCELL.IS", "VESTL.IS", "MGROS.IS"
     ]
 
 def send_telegram(message: str):
@@ -54,13 +53,9 @@ def send_telegram(message: str):
         "parse_mode": "Markdown"
     }
     try:
-        res = requests.post(url, json=payload, timeout=15)
-        if res.status_code == 200:
-            print("Telegram bildirimi başarıyla gönderildi.")
-        else:
-            print(f"Telegram API Hatası: {res.text}")
+        requests.post(url, json=payload, timeout=15)
     except Exception as e:
-        print(f"Telegram bağlantı hatası: {e}")
+        print(f"Telegram hatası: {e}")
 
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     """yfinance MultiIndex sütun yapısını ve eksik verileri temizler."""
@@ -81,15 +76,15 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
     return pd.Series(res, index=series.index)
 
 def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
-    """TradingView BIST 4 saatlik seans barlarını (10:00-14:00 ve 14:00-18:00) hatasız birleştirir."""
+    """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) birebir oluşturur."""
     df = clean_df(df_1h)
-    if df.empty or len(df) < 20:
+    if df.empty or len(df) < 15:
         return pd.DataFrame()
     
     df_copy = df.copy()
     df_copy['date'] = df_copy.index.date
-    # BIST Seansı: 10:00 - 14:00 (1. yarı), 14:00 - 18:10 (2. yarı)
-    df_copy['half'] = np.where(df_copy.index.hour < 14, 1, 2)
+    # TradingView 4H Kırılımı: 09:00 - 13:00 (1. Mum) ve 13:00 - 18:10 (2. Mum)
+    df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
     
     df_4h = df_copy.groupby(['date', 'half']).agg({
         'Open': 'first',
@@ -100,13 +95,13 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     
     new_idx = []
     for d, h in df_4h.index:
-        hour_str = "10:00:00" if h == 1 else "14:00:00"
+        hour_str = "09:00:00" if h == 1 else "13:00:00"
         new_idx.append(pd.Timestamp(f"{d} {hour_str}+03:00"))
     df_4h.index = pd.DatetimeIndex(new_idx)
     return df_4h
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
-    """Pine Script Evan Cabral Oscillators (ECO) kodunu hesaplar."""
+    """Pine Script ECO göstergesini hesaplar ve tam mum saatiyle sinyal üretir."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -115,7 +110,6 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     low = df['Low'].squeeze()
     close = df['Close'].squeeze()
 
-    # True Range (tr)
     prev_close = close.shift(1)
     tr1 = high - low
     tr2 = (high - prev_close).abs()
@@ -142,48 +136,65 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     sum_osc_lo = (osc - lo).rolling(window=Stolength).sum()
     sum_hi_lo = (hi - lo).rolling(window=Stolength).sum()
 
-    # Sıfıra bölme ve NaN koruması
     denom = sum_hi_lo.replace(0, 1e-10)
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Son ve bir önceki mum değerleri
-    c_curr = float(stoch.iloc[-1])
-    c_prev = float(stoch.iloc[-2])
-    c_prev2 = float(stoch.iloc[-3]) if len(stoch) >= 3 else c_prev
+    # Pine script kesişim şartları
+    cross_up = (stoch.shift(1) < 10) & (stoch > 10)
+    cross_down = (stoch.shift(1) > 90) & (stoch < 90)
 
-    hisse_adi = symbol.replace(".IS", "")
-    curr_price = float(close.iloc[-1])
+    target_idx = None
+    sig_type = None
 
-    # AL Sinyali: DMI-Stoch 10 seviyesini yukarı kesti ('B')
-    is_buy = (c_prev < 10 and c_curr > 10) or (c_prev2 < 10 and c_prev > 10)
+    # En son mum veya bir önceki mumda kesişim oldu mu?
+    if cross_up.iloc[-1]:
+        target_idx = -1
+        sig_type = "BUY"
+    elif cross_down.iloc[-1]:
+        target_idx = -1
+        sig_type = "SELL"
+    elif cross_up.iloc[-2]:
+        target_idx = -2
+        sig_type = "BUY"
+    elif cross_down.iloc[-2]:
+        target_idx = -2
+        sig_type = "SELL"
 
-    # SAT Sinyali: DMI-Stoch 90 seviyesini aşağı kesti ('S')
-    is_sell = (c_prev > 90 and c_curr < 90) or (c_prev2 > 90 and c_prev < 90)
+    if sig_type is not None:
+        candle_time = df.index[target_idx]
+        candle_price = float(close.iloc[target_idx])
+        c_stoch = float(stoch.iloc[target_idx])
+        p_stoch = float(stoch.iloc[target_idx - 1])
 
-    if is_buy:
-        return (
-            f"🟢 *BIST AL SİNYALİ (Evan Cabral - ECO)*\n\n"
-            f"📌 *Hisse:* #{hisse_adi}\n"
-            f"⏱ *Zaman Dilimi:* `{tf_label}`\n"
-            f"💵 *Fiyat:* {curr_price:.2f} TL\n"
-            f"📊 *DMI-Stoch:* {c_curr:.1f} (Önceki: {c_prev:.1f})\n"
-            f"🎯 *Tetikleyici:* DMI-Stoch 10 seviyesini yukarı kesti ('B')."
-        )
-    elif is_sell:
-        return (
-            f"🔴 *BIST SAT SİNYALİ (Evan Cabral - ECO)*\n\n"
-            f"📌 *Hisse:* #{hisse_adi}\n"
-            f"⏱ *Zaman Dilimi:* `{tf_label}`\n"
-            f"💵 *Fiyat:* {curr_price:.2f} TL\n"
-            f"📊 *DMI-Stoch:* {c_curr:.1f} (Önceki: {c_prev:.1f})\n"
-            f"🎯 *Tetikleyici:* DMI-Stoch 90 seviyesini aşağı kesti ('S')."
-        )
+        time_str = candle_time.strftime('%d.%m.%Y') if "Günlük" in tf_label else candle_time.strftime('%H:%M')
+        hisse_adi = symbol.replace(".IS", "")
+
+        if sig_type == "BUY":
+            return (
+                f"🟢 *BIST AL SİNYALİ (Evan Cabral - ECO)*\n\n"
+                f"📌 *Hisse:* #{hisse_adi}\n"
+                f"⏱ *Zaman Dilimi:* `{tf_label}`\n"
+                f"🕒 *Mum Saati:* `{time_str}`\n"
+                f"💵 *Sinyal Fiyatı:* {candle_price:.2f} TL\n"
+                f"📊 *DMI-Stoch:* {c_stoch:.1f} (Önceki: {p_stoch:.1f})\n"
+                f"🎯 *Tetikleyici:* DMI-Stoch 10 seviyesini yukarı kesti ('B')."
+            )
+        else:
+            return (
+                f"🔴 *BIST SAT SİNYALİ (Evan Cabral - ECO)*\n\n"
+                f"📌 *Hisse:* #{hisse_adi}\n"
+                f"⏱ *Zaman Dilimi:* `{tf_label}`\n"
+                f"🕒 *Mum Saati:* `{time_str}`\n"
+                f"💵 *Sinyal Fiyatı:* {candle_price:.2f} TL\n"
+                f"📊 *DMI-Stoch:* {c_stoch:.1f} (Önceki: {p_stoch:.1f})\n"
+                f"🎯 *Tetikleyici:* DMI-Stoch 90 seviyesini aşağı kesti ('S')."
+            )
 
     return None
 
 def analyze_ticker(symbol: str):
-    """15m, 1h, 4h ve 1d periyotlarını birbirinden bağımsız güvenle inceler."""
+    """15m, 1h, 4h ve 1d periyotlarını analiz eder."""
     signals = []
     
     # 1. 15 Dakika
@@ -203,7 +214,7 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
-    # 3. 4 Saat (BIST seans birleştirmesi)
+    # 3. 4 Saat (09:00 - 13:00 ve 13:00 - 18:10 TradingView Uyumlu)
     try:
         if df_1h is not None and not df_1h.empty:
             df_4h = make_bist_4h(df_1h)
