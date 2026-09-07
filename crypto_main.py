@@ -12,7 +12,7 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
 
-# İzleme Listenizdeki Koinler (USDT Pariteleri)
+# İzleme Listenizdeki 35 Koin
 COINS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", 
     "ADAUSDT", "AVAXUSDT", "LINKUSDT", "BCHUSDT", "LTCUSDT", 
@@ -24,10 +24,10 @@ COINS = [
 ]
 
 TIMEFRAMES = [
-    ("15m", "15 Dakika (15m)"),
-    ("1h",  "1 Saat (1h)"),
-    ("4h",  "4 Saat (4h)"),
-    ("1d",  "Günlük (1D)")
+    ("15m", "15 Dakika (15m)", "15"),
+    ("1h",  "1 Saat (1h)",      "60"),
+    ("4h",  "4 Saat (4h)",      "240"),
+    ("1d",  "Günlük (1D)",      "D")
 ]
 
 def send_telegram(message: str):
@@ -39,31 +39,53 @@ def send_telegram(message: str):
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload, timeout=15)
+        res = requests.post(url, json=payload, timeout=15)
+        if res.status_code == 200:
+            print("Telegram bildirimi iletildi.")
+        else:
+            print(f"Telegram hatası: {res.text}")
     except Exception as e:
-        print(f"Telegram hatası: {e}")
+        print(f"Telegram bağlantı hatası: {e}")
 
-def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
-    """Binance doğrudan API'sinden TradingView ile birebir mumları çeker."""
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=100"
+def get_crypto_klines(symbol: str, interval_code: str) -> pd.DataFrame:
+    """TradingView ile birebir aynı kripto mumlarını engelsiz API üzerinden çeker."""
+    # 1. Bybit Spot üzerinden dene
+    url_spot = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={interval_code}&limit=100"
     try:
-        res = requests.get(url, timeout=10)
-        if res.status_code != 200:
-            return pd.DataFrame()
-        data = res.json()
-        df = pd.DataFrame(data, columns=[
-            'time', 'Open', 'High', 'Low', 'Close', 'Volume', 
-            'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
-        ])
-        df['Open'] = df['Open'].astype(float)
-        df['High'] = df['High'].astype(float)
-        df['Low'] = df['Low'].astype(float)
-        df['Close'] = df['Close'].astype(float)
-        # TSİ saatine çevir (UTC+3)
-        df.index = pd.to_datetime(df['time'], unit='ms') + pd.Timedelta(hours=3)
-        return df
+        res = requests.get(url_spot, timeout=8)
+        if res.status_code == 200:
+            raw_list = res.json().get('result', {}).get('list', [])
+            if raw_list and len(raw_list) >= 20:
+                raw_list = raw_list[::-1]  # Zamanı eskidikten yeniye sırala
+                df = pd.DataFrame(raw_list, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'turn'])
+                df['Open'] = df['Open'].astype(float)
+                df['High'] = df['High'].astype(float)
+                df['Low'] = df['Low'].astype(float)
+                df['Close'] = df['Close'].astype(float)
+                df.index = pd.to_datetime(df['time'].astype(np.int64), unit='ms') + pd.Timedelta(hours=3)
+                return df
     except Exception:
-        return pd.DataFrame()
+        pass
+
+    # 2. Bybit Linear (Vadeli) üzerinden dene (Spot'ta olmayan yeni koinler için)
+    url_linear = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval={interval_code}&limit=100"
+    try:
+        res = requests.get(url_linear, timeout=8)
+        if res.status_code == 200:
+            raw_list = res.json().get('result', {}).get('list', [])
+            if raw_list and len(raw_list) >= 20:
+                raw_list = raw_list[::-1]
+                df = pd.DataFrame(raw_list, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'turn'])
+                df['Open'] = df['Open'].astype(float)
+                df['High'] = df['High'].astype(float)
+                df['Low'] = df['Low'].astype(float)
+                df['Close'] = df['Close'].astype(float)
+                df.index = pd.to_datetime(df['time'].astype(np.int64), unit='ms') + pd.Timedelta(hours=3)
+                return df
+    except Exception:
+        pass
+
+    return pd.DataFrame()
 
 def wwma(series: pd.Series, length: int) -> pd.Series:
     """Pine Script: wwma(l,p) => (nz(wwma) * (l - 1) + p) / l"""
@@ -79,9 +101,9 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     if df.empty or len(df) < 20:
         return None
 
-    high = df['High']
-    low = df['Low']
-    close = df['Close']
+    high = df['High'].squeeze()
+    low = df['Low'].squeeze()
+    close = df['Close'].squeeze()
 
     prev_close = close.shift(1)
     tr1 = high - low
@@ -160,8 +182,8 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
 def scan_single_coin(symbol: str):
     """Tek bir koin için 4 periyodu tarar."""
     found_signals = []
-    for interval, label in TIMEFRAMES:
-        df = get_binance_klines(symbol, interval)
+    for tf_key, label, code in TIMEFRAMES:
+        df = get_crypto_klines(symbol, code)
         sig = evaluate_eco_crypto(df, symbol, label)
         if sig:
             found_signals.append(sig)
