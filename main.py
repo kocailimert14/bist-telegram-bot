@@ -29,15 +29,20 @@ def get_all_bist_tickers():
         res = requests.post(url, json=payload, headers=headers, timeout=10)
         data = res.json()
         tickers = [item["d"][0] + ".IS" for item in data.get("data", []) if "d" in item and len(item["d"]) > 0]
-        if len(tickers) > 100:
+        if len(tickers) > 50:
+            print(f"Toplam {len(tickers)} adet BIST hissesi listelendi.")
             return tickers
     except Exception as e:
-        print(f"Dinamik liste hatası: {e}")
+        print(f"Dinamik liste çekilemedi ({e}), geniş yedek liste kullanılıyor.")
 
+    # Yedek Geniş BIST Listesi
     return [
-        "THYAO.IS", "ASELS.IS", "EREGL.IS", "KCHOL.IS", "TUPRS.IS", 
-        "GARAN.IS", "AKBNK.IS", "YKBNK.IS", "ISCTR.IS", "BIMAS.IS", 
-        "SISE.IS",  "SAHOL.IS", "FROTO.IS", "TOASO.IS", "ENKAI.IS"
+        "THYAO.IS", "ASELS.IS", "EREGL.IS", "KCHOL.IS", "TUPRS.IS", "GARAN.IS", 
+        "AKBNK.IS", "YKBNK.IS", "ISCTR.IS", "BIMAS.IS", "SISE.IS",  "SAHOL.IS", 
+        "FROTO.IS", "TOASO.IS", "ENKAI.IS", "PGSUS.IS", "KOZAL.IS", "PETKM.IS", 
+        "EKGYO.IS", "HEKTS.IS", "SASA.IS",  "ASTOR.IS", "ALARK.IS", "ARCLK.IS", 
+        "GUBRF.IS", "KRDMD.IS", "ODAS.IS",  "OYAKC.IS", "SOKM.IS",  "TAVHL.IS", 
+        "TKFEN.IS", "TTKOM.IS", "TCELL.IS", "VESTL.IS", "MGROS.IS", "KONTR.IS"
     ]
 
 def send_telegram(message: str):
@@ -49,9 +54,22 @@ def send_telegram(message: str):
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload, timeout=15)
+        res = requests.post(url, json=payload, timeout=15)
+        if res.status_code == 200:
+            print("Telegram bildirimi başarıyla gönderildi.")
+        else:
+            print(f"Telegram API Hatası: {res.text}")
     except Exception as e:
-        print(f"Telegram hatası: {e}")
+        print(f"Telegram bağlantı hatası: {e}")
+
+def clean_df(df: pd.DataFrame) -> pd.DataFrame:
+    """yfinance MultiIndex sütun yapısını ve eksik verileri temizler."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df = df.dropna(subset=['High', 'Low', 'Close'])
+    return df
 
 def wwma(series: pd.Series, length: int) -> pd.Series:
     """Pine Script: wwma(l,p) => (nz(wwma) * (l - 1) + p) / l"""
@@ -63,19 +81,23 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
     return pd.Series(res, index=series.index)
 
 def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
-    """TradingView BIST 4 saatlik mumlarını (10:00-14:00 ve 14:00-18:00) birebir oluşturur."""
-    if df_1h.empty or len(df_1h) < 20:
+    """TradingView BIST 4 saatlik seans barlarını (10:00-14:00 ve 14:00-18:00) hatasız birleştirir."""
+    df = clean_df(df_1h)
+    if df.empty or len(df) < 20:
         return pd.DataFrame()
-    df = df_1h.copy()
-    df['date'] = df.index.date
-    # 1. Yarı: 10:00 - 14:00 | 2. Yarı: 14:00 - 18:10
-    df['session_half'] = np.where(df.index.hour < 14, 1, 2)
-    df_4h = df.groupby(['date', 'session_half']).agg({
+    
+    df_copy = df.copy()
+    df_copy['date'] = df_copy.index.date
+    # BIST Seansı: 10:00 - 14:00 (1. yarı), 14:00 - 18:10 (2. yarı)
+    df_copy['half'] = np.where(df_copy.index.hour < 14, 1, 2)
+    
+    df_4h = df_copy.groupby(['date', 'half']).agg({
         'Open': 'first',
         'High': 'max',
         'Low': 'min',
         'Close': 'last'
     })
+    
     new_idx = []
     for d, h in df_4h.index:
         hour_str = "10:00:00" if h == 1 else "14:00:00"
@@ -84,13 +106,9 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     return df_4h
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
-    """Pine Script ECO göstergesini hesaplar ve sinyal üretir."""
+    """Pine Script Evan Cabral Oscillators (ECO) kodunu hesaplar."""
+    df = clean_df(df)
     if df.empty or len(df) < 15:
-        return None
-
-    # Eksik verileri temizle
-    df = df.dropna(subset=['High', 'Low', 'Close'])
-    if len(df) < 15:
         return None
 
     high = df['High'].squeeze()
@@ -124,12 +142,12 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     sum_osc_lo = (osc - lo).rolling(window=Stolength).sum()
     sum_hi_lo = (hi - lo).rolling(window=Stolength).sum()
 
-    # Sıfıra bölme hatasını önle ve NaN oluşmasını engelle
+    # Sıfıra bölme ve NaN koruması
     denom = sum_hi_lo.replace(0, 1e-10)
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Hem en son mumu hem de bir önceki mumu kontrol et (18:00 kapanış mumu ile 17:00'yi kaçırmaz)
+    # Son ve bir önceki mum değerleri
     c_curr = float(stoch.iloc[-1])
     c_prev = float(stoch.iloc[-2])
     c_prev2 = float(stoch.iloc[-3]) if len(stoch) >= 3 else c_prev
@@ -137,10 +155,10 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     hisse_adi = symbol.replace(".IS", "")
     curr_price = float(close.iloc[-1])
 
-    # AL Sinyali ('B'): DMI-Stoch 10 seviyesini yukarı kesti
+    # AL Sinyali: DMI-Stoch 10 seviyesini yukarı kesti ('B')
     is_buy = (c_prev < 10 and c_curr > 10) or (c_prev2 < 10 and c_prev > 10)
 
-    # SAT Sinyali ('S'): DMI-Stoch 90 seviyesini aşağı kesti
+    # SAT Sinyali: DMI-Stoch 90 seviyesini aşağı kesti ('S')
     is_sell = (c_prev > 90 and c_curr < 90) or (c_prev2 > 90 and c_prev < 90)
 
     if is_buy:
@@ -165,30 +183,40 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     return None
 
 def analyze_ticker(symbol: str):
-    """15m, 1h, 4h ve 1d periyotlarını analiz eder."""
+    """15m, 1h, 4h ve 1d periyotlarını birbirinden bağımsız güvenle inceler."""
     signals = []
+    
+    # 1. 15 Dakika
     try:
-        # 1. 15 Dakikalık Veri
         df_15m = yf.download(symbol, period="5d", interval="15m", progress=False)
         s15 = evaluate_eco(df_15m, symbol, "15 Dakika (15m)")
         if s15: signals.append(s15)
+    except Exception:
+        pass
 
-        # 2. 1 Saatlik Veri
+    # 2. 1 Saat
+    df_1h = None
+    try:
         df_1h = yf.download(symbol, period="1mo", interval="1h", progress=False)
         s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
         if s1h: signals.append(s1h)
+    except Exception:
+        pass
 
-        # 3. 4 Saatlik Veri (TradingView BIST seansına göre tam uyumlu)
-        if not df_1h.empty and len(df_1h) >= 20:
+    # 3. 4 Saat (BIST seans birleştirmesi)
+    try:
+        if df_1h is not None and not df_1h.empty:
             df_4h = make_bist_4h(df_1h)
             s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)")
             if s4h: signals.append(s4h)
+    except Exception:
+        pass
 
-        # 4. Günlük Veri (1 Yıllık geniş geçmişle tam uyumlu)
+    # 4. Günlük (1D)
+    try:
         df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
         s1d = evaluate_eco(df_1d, symbol, "Günlük (1D)")
         if s1d: signals.append(s1d)
-
     except Exception:
         pass
 
