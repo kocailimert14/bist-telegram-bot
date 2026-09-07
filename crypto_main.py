@@ -39,9 +39,13 @@ def send_telegram(message: str):
         "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, json=payload, timeout=15)
+        res = requests.post(url, json=payload, timeout=15)
+        if res.status_code == 200:
+            print("Telegram bildirimi iletildi.")
+        else:
+            print(f"Telegram hatası: {res.text}")
     except Exception as e:
-        print(f"Telegram hatası: {e}")
+        print(f"Telegram bağlantı hatası: {e}")
 
 def get_crypto_klines(symbol: str, interval_code: str) -> pd.DataFrame:
     """Bybit Spot ve Linear API üzerinden kline çeker."""
@@ -93,7 +97,7 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
 def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     """TradingView Evan Cabral Oscillators (ECO) formülü."""
     if df is None or df.empty or len(df) < 20:
-        return None, None
+        return None
 
     high = df['High'].squeeze()
     low = df['Low'].squeeze()
@@ -129,7 +133,7 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Pine script kesişim şartları
+    # Kesişim şartları
     cross_up = (stoch.shift(1) < 10) & (stoch > 10)
     cross_down = (stoch.shift(1) > 90) & (stoch < 90)
 
@@ -149,7 +153,6 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
         target_idx = -2
         sig_type = "SELL"
 
-    sig_msg = None
     if sig_type is not None:
         candle_time = df.index[target_idx]
         candle_price = float(close.iloc[target_idx])
@@ -161,7 +164,7 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
         tag = "🟢 *KRİPTO AL SİNYALİ*" if sig_type == "BUY" else "🔴 *KRİPTO SAT SİNYALİ*"
         trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
 
-        sig_msg = (
+        return (
             f"{tag} *(Evan Cabral - ECO)*\n\n"
             f"🪙 *Koin:* #{coin_name}/USDT\n"
             f"⏱ *Zaman Dilimi:* `{tf_label}`\n"
@@ -171,52 +174,32 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
             f"🎯 *Tetikleyici:* DMI-Stoch {trigger}."
         )
 
-    current_val = float(stoch.iloc[-1])
-    return sig_msg, current_val
+    return None
 
 def scan_single_coin(symbol: str):
     """Tek bir koin için 4 periyodu tarar."""
     found_signals = []
-    sample_values = {}
     for tf_key, label, code in TIMEFRAMES:
         df = get_crypto_klines(symbol, code)
-        sig, val = evaluate_eco_crypto(df, symbol, label)
+        sig = evaluate_eco_crypto(df, symbol, label)
         if sig:
             found_signals.append(sig)
-        if tf_key == "1h" and val is not None:
-            sample_values[symbol] = val
-    return found_signals, sample_values
+    return found_signals
 
 def main():
     print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; 15m, 1h, 4h, 1D)...")
     toplam = 0
-    all_sample_values = {}
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(scan_single_coin, coin): coin for coin in COINS}
         for future in as_completed(futures):
-            sigs, samples = future.result()
-            all_sample_values.update(samples)
+            sigs = future.result()
             if sigs:
                 for msg in sigs:
                     send_telegram(msg)
                     toplam += 1
 
-    # Taramayı onaylayan durum özeti
-    ornekler = []
-    for k in ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT"]:
-        if k in all_sample_values:
-            ornekler.append(f"• {k.replace('USDT', '')} (1s): `{all_sample_values[k]:.1f}`")
-
-    rapor = (
-        f"📊 *Kripto Tarama Raporu (Evan Cabral)*\n\n"
-        f"✅ *{len(COINS)} Koin* x 4 Zaman Dilimi (140 grafik) başarıyla tarandı.\n"
-        f"🎯 Yeni Kesişim Sinyali: *{toplam} adet*\n\n"
-        f"📈 *Örnek Anlık DMI-Stoch Seviyeleri:*\n" + "\n".join(ornekler) + "\n\n"
-        f"_Osilatör 10 veya 90 seviyesini kırdığında anında sinyal kartı düşecektir._"
-    )
-    send_telegram(rapor)
-    print(f"Tarama tamamlandı. Rapor gönderildi.")
+    print(f"Tarama bitti! Üretilen sinyal sayısı: {toplam}")
 
 if __name__ == "__main__":
     main()
