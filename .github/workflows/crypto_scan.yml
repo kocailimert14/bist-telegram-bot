@@ -1,0 +1,31 @@
+name: Kripto Evan Cabral Tarayıcı
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 7 gün 24 saat boyunca her 30 dakikada bir otomatik çalışır
+    - cron: '*/30 * * * *'
+
+jobs:
+  kripto_tarama:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Depoyu Klonla
+        uses: actions/checkout@v4
+
+      - name: Python Kurulumu
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Paketleri Yükle
+        run: |
+          pip install pandas requests numpy
+
+      - name: Kripto Tarama Kodunu Çalıştır
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python crypto_main.py
