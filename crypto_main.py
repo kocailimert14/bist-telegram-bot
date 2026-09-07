@@ -39,24 +39,19 @@ def send_telegram(message: str):
         "parse_mode": "Markdown"
     }
     try:
-        res = requests.post(url, json=payload, timeout=15)
-        if res.status_code == 200:
-            print("Telegram bildirimi iletildi.")
-        else:
-            print(f"Telegram hatası: {res.text}")
+        requests.post(url, json=payload, timeout=15)
     except Exception as e:
-        print(f"Telegram bağlantı hatası: {e}")
+        print(f"Telegram hatası: {e}")
 
 def get_crypto_klines(symbol: str, interval_code: str) -> pd.DataFrame:
-    """TradingView ile birebir aynı kripto mumlarını engelsiz API üzerinden çeker."""
-    # 1. Bybit Spot üzerinden dene
+    """Bybit Spot ve Linear API üzerinden kline çeker."""
     url_spot = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={interval_code}&limit=100"
     try:
         res = requests.get(url_spot, timeout=8)
         if res.status_code == 200:
             raw_list = res.json().get('result', {}).get('list', [])
             if raw_list and len(raw_list) >= 20:
-                raw_list = raw_list[::-1]  # Zamanı eskidikten yeniye sırala
+                raw_list = raw_list[::-1]
                 df = pd.DataFrame(raw_list, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'turn'])
                 df['Open'] = df['Open'].astype(float)
                 df['High'] = df['High'].astype(float)
@@ -67,7 +62,6 @@ def get_crypto_klines(symbol: str, interval_code: str) -> pd.DataFrame:
     except Exception:
         pass
 
-    # 2. Bybit Linear (Vadeli) üzerinden dene (Spot'ta olmayan yeni koinler için)
     url_linear = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval={interval_code}&limit=100"
     try:
         res = requests.get(url_linear, timeout=8)
@@ -98,8 +92,8 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
 
 def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     """TradingView Evan Cabral Oscillators (ECO) formülü."""
-    if df.empty or len(df) < 20:
-        return None
+    if df is None or df.empty or len(df) < 20:
+        return None, None
 
     high = df['High'].squeeze()
     low = df['Low'].squeeze()
@@ -155,54 +149,74 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
         target_idx = -2
         sig_type = "SELL"
 
+    sig_msg = None
     if sig_type is not None:
         candle_time = df.index[target_idx]
         candle_price = float(close.iloc[target_idx])
-        c_stoch = float(stoch.iloc[target_idx])
-        p_stoch = float(stoch.iloc[target_idx - 1])
-
+        c_st = float(stoch.iloc[target_idx])
+        p_st = float(stoch.iloc[target_idx - 1])
         time_str = candle_time.strftime('%d.%m.%Y') if "Günlük" in tf_label else candle_time.strftime('%H:%M')
         coin_name = symbol.replace("USDT", "")
 
         tag = "🟢 *KRİPTO AL SİNYALİ*" if sig_type == "BUY" else "🔴 *KRİPTO SAT SİNYALİ*"
         trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
 
-        return (
+        sig_msg = (
             f"{tag} *(Evan Cabral - ECO)*\n\n"
             f"🪙 *Koin:* #{coin_name}/USDT\n"
             f"⏱ *Zaman Dilimi:* `{tf_label}`\n"
             f"🕒 *Mum Saati:* `{time_str}` (TSİ)\n"
             f"💵 *Sinyal Fiyatı:* ${candle_price:,.4f}\n"
-            f"📊 *DMI-Stoch:* {c_stoch:.1f} (Önceki: {p_stoch:.1f})\n"
+            f"📊 *DMI-Stoch:* {c_st:.1f} (Önceki: {p_st:.1f})\n"
             f"🎯 *Tetikleyici:* DMI-Stoch {trigger}."
         )
 
-    return None
+    current_val = float(stoch.iloc[-1])
+    return sig_msg, current_val
 
 def scan_single_coin(symbol: str):
     """Tek bir koin için 4 periyodu tarar."""
     found_signals = []
+    sample_values = {}
     for tf_key, label, code in TIMEFRAMES:
         df = get_crypto_klines(symbol, code)
-        sig = evaluate_eco_crypto(df, symbol, label)
+        sig, val = evaluate_eco_crypto(df, symbol, label)
         if sig:
             found_signals.append(sig)
-    return found_signals
+        if tf_key == "1h" and val is not None:
+            sample_values[symbol] = val
+    return found_signals, sample_values
 
 def main():
     print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; 15m, 1h, 4h, 1D)...")
     toplam = 0
+    all_sample_values = {}
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(scan_single_coin, coin): coin for coin in COINS}
         for future in as_completed(futures):
-            results = future.result()
-            if results:
-                for msg in results:
+            sigs, samples = future.result()
+            all_sample_values.update(samples)
+            if sigs:
+                for msg in sigs:
                     send_telegram(msg)
                     toplam += 1
 
-    print(f"Kripto taraması bitti! Bulunan toplam sinyal: {toplam}")
+    # Taramayı onaylayan durum özeti
+    ornekler = []
+    for k in ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AVAXUSDT"]:
+        if k in all_sample_values:
+            ornekler.append(f"• {k.replace('USDT', '')} (1s): `{all_sample_values[k]:.1f}`")
+
+    rapor = (
+        f"📊 *Kripto Tarama Raporu (Evan Cabral)*\n\n"
+        f"✅ *{len(COINS)} Koin* x 4 Zaman Dilimi (140 grafik) başarıyla tarandı.\n"
+        f"🎯 Yeni Kesişim Sinyali: *{toplam} adet*\n\n"
+        f"📈 *Örnek Anlık DMI-Stoch Seviyeleri:*\n" + "\n".join(ornekler) + "\n\n"
+        f"_Osilatör 10 veya 90 seviyesini kırdığında anında sinyal kartı düşecektir._"
+    )
+    send_telegram(rapor)
+    print(f"Tarama tamamlandı. Rapor gönderildi.")
 
 if __name__ == "__main__":
     main()
