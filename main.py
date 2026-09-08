@@ -13,7 +13,7 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
 
-# TURSG, TUPRS, PKART ve BIST'in En Aktif Hisseleri
+# TUPRS, TURSG, PKART ve BIST'in En Aktif Hisseleri
 BIST_TICKERS = [
     "TURSG.IS", "TUPRS.IS", "PKART.IS", "THYAO.IS", "ASELS.IS", "EREGL.IS", "KCHOL.IS", "GARAN.IS", 
     "AKBNK.IS", "YKBNK.IS", "ISCTR.IS", "BIMAS.IS", "SISE.IS",  "SAHOL.IS", "FROTO.IS", 
@@ -43,12 +43,18 @@ def send_telegram(message: str):
         print(f"Telegram bağlantı hatası: {e}")
 
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    """yfinance MultiIndex sütun yapısını ve eksik verileri temizler."""
+    """yfinance verisini temizler ve Türkiye Saatine (TSİ) kilitler."""
     if df is None or df.empty:
         return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.dropna(subset=['High', 'Low', 'Close'])
+    
+    # Türkiye saatine kilitliyoruz
+    if getattr(df.index, 'tz', None) is not None:
+        df.index = df.index.tz_convert('Europe/Istanbul')
+    else:
+        df.index = df.index.tz_localize('UTC').tz_convert('Europe/Istanbul')
     return df
 
 def wwma(series: pd.Series, length: int) -> pd.Series:
@@ -115,6 +121,7 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     
     df_copy = df.copy()
     df_copy['date'] = df_copy.index.date
+    # TSİ saatine göre 13:00 ayrımı
     df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
     
     df_4h = df_copy.groupby(['date', 'half']).agg({
@@ -132,7 +139,7 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     return df_4h
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
-    """Pine Script ECO göstergesini saf kuralıyla hesaplar."""
+    """Pine Script ECO göstergesini saf mantığıyla hesaplar."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -194,6 +201,8 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             if getattr(candle_time, 'minute', 0) != 0:
                 candle_time = candle_time + pd.Timedelta(minutes=30)
             time_str = candle_time.strftime('%H:00')
+        elif "15 Dakika" in tf_label:
+            time_str = candle_time.strftime('%H:%M')
         else:
             time_str = candle_time.strftime('%d.%m.%Y')
 
@@ -229,6 +238,8 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             if getattr(candle_time, 'minute', 0) != 0:
                 candle_time = candle_time + pd.Timedelta(minutes=30)
             time_str = candle_time.strftime('%H:00')
+        elif "15 Dakika" in tf_label:
+            time_str = candle_time.strftime('%H:%M')
         else:
             time_str = candle_time.strftime('%d.%m.%Y')
 
@@ -254,7 +265,16 @@ def analyze_ticker(symbol: str):
     """Orijinal ve hatasız doğrudan indirme yöntemi."""
     signals = []
     
-    # 1. 1 Saatlik
+    # 1. 15 Dakikalık (Sinyal akışını sağlayan ana periyot)
+    try:
+        df_15m = yf.download(symbol, period="5d", interval="15m", progress=False)
+        s15 = evaluate_eco(df_15m, symbol, "15 Dakika (15m)")
+        if s15:
+            signals.append(s15)
+    except Exception:
+        pass
+
+    # 2. 1 Saatlik
     df_1h = None
     try:
         df_1h = yf.download(symbol, period="1mo", interval="1h", progress=False)
@@ -264,7 +284,7 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
-    # 2. 4 Saatlik
+    # 3. 4 Saatlik
     try:
         if df_1h is not None and not df_1h.empty:
             df_4h = make_bist_4h(df_1h)
@@ -274,7 +294,7 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
-    # 3. Günlük (1D)
+    # 4. Günlük (1D)
     try:
         df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
         s1d = evaluate_eco(df_1d, symbol, "Günlük (1D)")
@@ -286,7 +306,7 @@ def analyze_ticker(symbol: str):
     return signals
 
 def main():
-    print(f"BIST Taraması Başlıyor ({len(BIST_TICKERS)} hisse; 1h, 4h, 1D)...")
+    print(f"BIST Taraması Başlıyor ({len(BIST_TICKERS)} hisse; 15m, 1h, 4h, 1D)...")
     toplam = 0
 
     with ThreadPoolExecutor(max_workers=10) as executor:
