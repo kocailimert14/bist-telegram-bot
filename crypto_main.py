@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+import threading
 import numpy as np
 import requests
 import pandas as pd
@@ -11,6 +13,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
+
+# Telegram mesaj sınırını aşmamak için kilit (Lock) mekanizması
+telegram_lock = threading.Lock()
 
 # İzleme Listenizdeki 35 Koin
 COINS = [
@@ -29,21 +34,34 @@ TIMEFRAMES = [
 ]
 
 def send_telegram(message: str):
-    """Telegram'a HTML formatında bildirim gönderir."""
+    """Telegram'a HTML formatında bildirim gönderir (Flood Korumalı)."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID, 
         "text": message, 
         "parse_mode": "HTML"
     }
-    try:
-        res = requests.post(url, json=payload, timeout=15)
-        if res.status_code == 200:
-            print("Telegram bildirimi iletildi.")
-        else:
-            print(f"Telegram hatası ({res.status_code}): {res.text}")
-    except Exception as e:
-        print(f"Telegram bağlantı hatası: {e}")
+    
+    with telegram_lock:
+        try:
+            res = requests.post(url, json=payload, timeout=15)
+            if res.status_code == 200:
+                print("Telegram bildirimi iletildi.")
+            elif res.status_code == 429:
+                retry_after = res.json().get("parameters", {}).get("retry_after", 5)
+                if retry_after > 60:
+                    print(f"⚠️ Telegram Şiddetli Flood Cezası! ({retry_after} sn). Bu mesaj gönderilemedi, sonraki mesajlar için bekleniyor.")
+                    return
+                print(f"Telegram 429 Limiti! {retry_after} saniye bekleniyor...")
+                time.sleep(retry_after)
+                requests.post(url, json=payload, timeout=15)
+            else:
+                print(f"Telegram hatası ({res.status_code}): {res.text}")
+            
+            # Mesajlar arası güvenli bekleme süresi (Saniyede en fazla 1-2 mesaj)
+            time.sleep(1.5)
+        except Exception as e:
+            print(f"Telegram bağlantı hatası: {e}")
 
 def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
     """Binance resmi engelsiz sunucusu üzerinden TradingView ile birebir mumları çeker."""
@@ -136,7 +154,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     # Noktasal Trend Çizgileri Rengi
     if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
         nokta_renk = "🟢 Yeşil"
-    elif (v_ma1 < v_ma2) and (v_ma2 < v_lower if False else v_ma2 < v_ma3):
+    elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
         nokta_renk = "🔴 Kırmızı"
     else:
         nokta_renk = "🟡 Sarı"
@@ -259,7 +277,7 @@ def main():
     print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; Sadece 1 Saatlik)...")
     toplam = 0
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(scan_single_coin, coin): coin for coin in COINS}
         for future in as_completed(futures):
             try:
