@@ -23,15 +23,14 @@ COINS = [
     "SANDUSDT", "ZECUSDT", "HYPEUSDT", "GRAMUSDT", "SUSDT"
 ]
 
+# Sadece 15 Dakikalık ve 1 Saatlik Mumlar
 TIMEFRAMES = [
     ("15m", "15 Dakika (15m)"),
-    ("1h",  "1 Saat (1h)"),
-    ("4h",  "4 Saat (4h)"),
-    ("1d",  "Günlük (1D)")
+    ("1h",  "1 Saat (1h)")
 ]
 
 def send_telegram(message: str):
-    """Telegram'a HTML formatında garantili bildirim gönderir."""
+    """Telegram'a HTML formatında bildirim gönderir."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID, 
@@ -49,7 +48,6 @@ def send_telegram(message: str):
 
 def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
     """Binance resmi engelsiz sunucusu üzerinden TradingView ile birebir mumları çeker."""
-    # 1. Binance Engellenmeyen Resmi Veri Sunucusu
     url_binance = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=100"
     try:
         res = requests.get(url_binance, timeout=8)
@@ -69,8 +67,8 @@ def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
     except Exception:
         pass
 
-    # 2. Yedek: Bybit (Binance'te listelenmemiş koinler varsa devreye girer)
-    interval_map = {"15m": "15", "1h": "60", "4h": "240", "1d": "D"}
+    # Yedek: Bybit
+    interval_map = {"15m": "15", "1h": "60"}
     bb_int = interval_map.get(interval, "60")
     url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={bb_int}&limit=100"
     try:
@@ -100,7 +98,7 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
         res[i] = (prev * (length - 1) + vals[i]) / length
     return pd.Series(res, index=series.index)
 
-def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
+def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str):
     """TradingView Evan Cabral Oscillators (ECO) formülü."""
     if df is None or df.empty or len(df) < 20:
         return []
@@ -143,16 +141,16 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     cross_up = (stoch.shift(1) < 10) & (stoch > 10)
     cross_down = (stoch.shift(1) > 90) & (stoch < 90)
 
-    # 15m için son 4 muma bakarak son 1 saatteki hiçbir sinyali kaçırmaz
-    check_indices = [-1, -2, -3, -4] if "15" in tf_label else [-1, -2]
-    
     signals = []
     coin_name = symbol.replace("USDT", "")
+    now = pd.Timestamp.now(tz='UTC') + pd.Timedelta(hours=3)
 
-    for idx in check_indices:
-        if abs(idx) > len(df):
-            continue
-        
+    # Yalnızca 2 mum incelenir:
+    # idx = -1 : O an açık olan CANLI MUM (Anlık sinyal)
+    # idx = -2 : Hemen bir önceki KAPANMIŞ MUM
+    candle_duration = pd.Timedelta(minutes=15) if tf_key == "15m" else pd.Timedelta(hours=1)
+
+    for idx in [-1, -2]:
         sig_type = None
         if cross_up.iloc[idx]:
             sig_type = "BUY"
@@ -161,10 +159,21 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
 
         if sig_type is not None:
             candle_time = df.index[idx]
+
+            # Eğer kapanmış mumsa (-2), kapanış üzerinden 15 dakikadan fazla geçmişse ESKİDİR, gönderme!
+            if idx == -2:
+                candle_close_time = candle_time + candle_duration
+                minutes_since_close = (now - candle_close_time).total_seconds() / 60.0
+                if minutes_since_close > 15.0:
+                    continue  # Eski sinyal, atla!
+                durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
+            else:
+                durum_metni = "⚠️ CANLI MUM (Kapanış Beklenmedi / Anlık)"
+
             candle_price = float(close.iloc[idx])
             c_st = float(stoch.iloc[idx])
             p_st = float(stoch.iloc[idx - 1])
-            time_str = candle_time.strftime('%d.%m.%Y') if "Günlük" in tf_label else candle_time.strftime('%H:%M')
+            time_str = candle_time.strftime('%H:%M')
 
             tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
             trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
@@ -174,7 +183,8 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
                 f"🪙 <b>Koin:</b> #{coin_name}/USDT\n"
                 f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
                 f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-                f"💵 <b>Sinyal Fiyatı:</b> ${candle_price:,.4f}\n"
+                f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
+                f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n"
                 f"📊 <b>DMI-Stoch:</b> {c_st:.1f} (Önceki: {p_st:.1f})\n"
                 f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}."
             )
@@ -184,17 +194,17 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     return signals
 
 def scan_single_coin(symbol: str):
-    """Tek bir koin için 4 periyodu tarar."""
+    """Tek bir koin için 15m ve 1h periyotlarını tarar."""
     found_signals = []
     for tf_key, label in TIMEFRAMES:
         df = get_binance_klines(symbol, tf_key)
-        sigs = evaluate_eco_crypto(df, symbol, label)
+        sigs = evaluate_eco_crypto(df, symbol, label, tf_key)
         if sigs:
             found_signals.extend(sigs)
     return found_signals
 
 def main():
-    print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; 15m, 1h, 4h, 1D)...")
+    print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; 15m, 1h)...")
     toplam = 0
 
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -206,7 +216,7 @@ def main():
                     send_telegram(msg)
                     toplam += 1
 
-    print(f"Tarama bitti! Üretilen toplam sinyal sayısı: {toplam}")
+    print(f"Tarama bitti! Üretilen yeni sinyal sayısı: {toplam}")
 
 if __name__ == "__main__":
     main()
