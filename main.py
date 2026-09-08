@@ -33,7 +33,6 @@ def get_all_bist_tickers():
     except Exception as e:
         print(f"Dinamik liste hatası: {e}")
 
-    # Geniş Yedek Liste
     return [
         "THYAO.IS", "ASELS.IS", "EREGL.IS", "KCHOL.IS", "TUPRS.IS", "GARAN.IS", 
         "AKBNK.IS", "YKBNK.IS", "ISCTR.IS", "BIMAS.IS", "SISE.IS",  "SAHOL.IS", 
@@ -120,6 +119,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     v_upper = float(upper.iloc[idx])
     v_lower = float(lower.iloc[idx])
 
+    # Düz Trend Kanalı Rengi
     if (v_ma1 > v_upper) and (v_ma2 > v_upper) and (v_ma3 > v_upper):
         kanal_renk = "🟢 Yeşil"
     elif (v_ma1 < v_lower) and (v_ma2 < v_lower) and (v_ma3 < v_lower):
@@ -127,9 +127,10 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     else:
         kanal_renk = "🔵 Mavi"
 
+    # Noktasal Trend Çizgileri Rengi
     if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
         nokta_renk = "🟢 Yeşil"
-    elif (v_ma1 < v_ma2) and (v_ma2 < v_lower if False else v_ma2 < v_ma3):
+    elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
         nokta_renk = "🔴 Kırmızı"
     else:
         nokta_renk = "🟡 Sarı"
@@ -171,8 +172,8 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     df_4h.index = pd.DatetimeIndex(new_idx)
     return df_4h
 
-def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str):
-    """Pine Script ECO göstergesini saf mantığıyla hesaplar."""
+def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str):
+    """Pine Script ECO göstergesini saf kuralıyla (canlı mum ve bir önceki mum) hesaplar."""
     if df.empty or len(df) < 10:
         return []
 
@@ -210,28 +211,29 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Pine script saf kesişim kuralları
+    # Pine script saf kesişim kuralları:
+    # crossUp = Stoch < 10 and Stoch > 10 ? 1 : 0
+    # crossDown = Stoch > 90 and Stoch < 90 ? 1 : 0
     cross_up = (stoch.shift(1) < 10) & (stoch > 10)
     cross_down = (stoch.shift(1) > 90) & (stoch < 90)
 
     signals = []
     hisse_adi = symbol.replace(".IS", "")
-    now = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
 
     target_idx = None
     sig_type = None
     durum_metni = ""
 
-    # 1. Önce o an açık olan CANLI MUMU kontrol et (iloc[-1])
+    # 1. Tarama anındaki açık olan CANLI MUM (iloc[-1])
     if cross_up.iloc[-1]:
         target_idx = -1
         sig_type = "BUY"
-        durum_metni = "⚠️ CANLI MUM (Kapanış Beklenmedi / Anlık)"
+        durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
     elif cross_down.iloc[-1]:
         target_idx = -1
         sig_type = "SELL"
-        durum_metni = "⚠️ CANLI MUM (Kapanış Beklenmedi / Anlık)"
-    # 2. Eğer canlı mumda kesişim yoksa, bir önceki KAPANMIŞ MUMU kontrol et (iloc[-2])
+        durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
+    # 2. Tarama yapılan andan hemen önceki KAPANMIŞ MUM (iloc[-2])
     elif cross_up.iloc[-2]:
         target_idx = -2
         sig_type = "BUY"
@@ -246,24 +248,10 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
         if getattr(candle_time, 'tzinfo', None) is not None:
             candle_time = candle_time.tz_convert('+03:00').tz_localize(None)
 
-        # Kapanmış mum (-2) için mantıklı periyot penceresi
-        if target_idx == -2:
-            if tf_key == "1h":
-                close_time = candle_time + pd.Timedelta(hours=1)
-                if (now - close_time).total_seconds() / 60.0 > 60.0:
-                    return []
-            elif tf_key == "4h":
-                close_time = candle_time + pd.Timedelta(hours=4)
-                if (now - close_time).total_seconds() / 60.0 > 240.0:
-                    return []
-            elif tf_key == "1d":
-                if (now.date() - candle_time.date()).days > 3:
-                    return []
-
         candle_price = float(close.iloc[target_idx])
         c_st = float(stoch.iloc[target_idx])
         p_st = float(stoch.iloc[target_idx - 1])
-        time_str = candle_time.strftime('%d.%m.%Y') if tf_key == "1d" else candle_time.strftime('%H:%M')
+        time_str = candle_time.strftime('%d.%m.%Y') if "Günlük" in tf_label else candle_time.strftime('%H:%M')
 
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
 
@@ -293,11 +281,10 @@ def main():
     CHUNK_SIZE = 50
     chunks = [tickers[i:i + CHUNK_SIZE] for i in range(0, len(tickers), CHUNK_SIZE)]
 
-    print(f"BIST Taraması Başlıyor ({len(tickers)} hisse, {len(chunks)} toplu paket)...")
+    print(f"BIST Taraması Başlıyor ({len(tickers)} hisse, {len(chunks)} grup)...")
 
     for i, chunk in enumerate(chunks, 1):
         try:
-            # 10 günlük 15m verisi (Tüm barları eksiksiz üretir)
             data_15m = yf.download(chunk, period="10d", interval="15m", group_by="ticker", threads=True, progress=False)
             data_1d = yf.download(chunk, period="6mo", interval="1d", group_by="ticker", threads=True, progress=False)
 
@@ -306,30 +293,32 @@ def main():
                     clean_15m = extract_ticker_df(data_15m, ticker)
                     if not clean_15m.empty:
                         df_1h = build_bist_hourly(clean_15m)
-                        if not df_1h.empty and len(df_1h) >= 10:
+                        if not df_1h.empty and len(df_1h) >= 15:
                             # 1 Saatlik Tarama
-                            for msg in evaluate_eco_bist(df_1h, ticker, "1 Saat (1h)", "1h"):
+                            for msg in evaluate_eco_bist(df_1h, ticker, "1 Saat (1h)"):
                                 send_telegram(msg)
                                 toplam += 1
                             # 4 Saatlik Tarama
                             df_4h = make_bist_4h(df_1h)
-                            for msg in evaluate_eco_bist(df_4h, ticker, "4 Saat (4h)", "4h"):
-                                send_telegram(msg)
-                                toplam += 1
+                            if not df_4h.empty and len(df_4h) >= 10:
+                                for msg in evaluate_eco_bist(df_4h, ticker, "4 Saat (4h)"):
+                                    send_telegram(msg)
+                                    toplam += 1
 
                     clean_1d = extract_ticker_df(data_1d, ticker)
-                    if not clean_1d.empty and len(clean_1d) >= 10:
-                        for msg in evaluate_eco_bist(clean_1d, ticker, "Günlük (1D)", "1d"):
+                    if not clean_1d.empty and len(clean_1d) >= 15:
+                        # Günlük Tarama
+                        for msg in evaluate_eco_bist(clean_1d, ticker, "Günlük (1D)"):
                             send_telegram(msg)
                             toplam += 1
 
-                except Exception as err:
+                except Exception:
                     pass
 
         except Exception as e:
             print(f"Grup {i} indirme hatası: {e}")
 
-    print(f"BIST Taraması bitti! Üretilen yeni sinyal sayısı: {toplam}")
+    print(f"BIST Taraması bitti! Gönderilen toplam sinyal: {toplam}")
 
 if __name__ == "__main__":
     main()
