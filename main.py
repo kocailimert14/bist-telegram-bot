@@ -13,38 +13,17 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
 
-def get_all_bist_tickers():
-    """BIST hisse listesi."""
-    url = "https://scanner.tradingview.com/turkey/scan"
-    payload = {
-        "filter": [{"left": "type", "operation": "equal", "right": "stock"}],
-        "options": {"lang": "tr"},
-        "symbols": {"query": {"types": []}},
-        "columns": ["name"],
-        "sort": {"sortBy": "name", "sortOrder": "asc"},
-        "range": [0, 1000]
-    }
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        res = requests.post(url, json=payload, headers=headers, timeout=10)
-        data = res.json()
-        tickers = [item["d"][0] + ".IS" for item in data.get("data", []) if "d" in item and len(item["d"]) > 0]
-        if len(tickers) > 50:
-            return tickers
-    except Exception as e:
-        print(f"Dinamik liste hatası: {e}")
-
-    # Geniş ve Likit BIST Listesi
-    return [
-        "THYAO.IS", "ASELS.IS", "EREGL.IS", "KCHOL.IS", "TUPRS.IS", "GARAN.IS", 
-        "AKBNK.IS", "YKBNK.IS", "ISCTR.IS", "BIMAS.IS", "SISE.IS",  "SAHOL.IS", 
-        "FROTO.IS", "TOASO.IS", "ENKAI.IS", "PGSUS.IS", "KOZAL.IS", "PETKM.IS", 
-        "EKGYO.IS", "HEKTS.IS", "SASA.IS",  "ASTOR.IS", "ALARK.IS", "ARCLK.IS", 
-        "GUBRF.IS", "KRDMD.IS", "ODAS.IS",  "OYAKC.IS", "SOKM.IS",  "TAVHL.IS", 
-        "PKART.IS", "TKFEN.IS", "TTKOM.IS", "TCELL.IS", "VESTL.IS", "MGROS.IS",
-        "VAKBN.IS", "HALKB.IS", "ISGYO.IS", "DOHOL.IS", "KOZAA.IS", "IPEKE.IS",
-        "BERA.IS",  "CIMSA.IS", "AKSA.IS",  "AKSEN.IS", "QUAGR.IS", "CANTE.IS"
-    ]
+# TUPRS, TURSG ve BIST'in En Aktif Hisseleri
+BIST_TICKERS = [
+    "TUPRS.IS", "TURSG.IS", "THYAO.IS", "ASELS.IS", "EREGL.IS", "KCHOL.IS", "GARAN.IS", 
+    "AKBNK.IS", "YKBNK.IS", "ISCTR.IS", "BIMAS.IS", "SISE.IS",  "SAHOL.IS", "FROTO.IS", 
+    "TOASO.IS", "ENKAI.IS", "PGSUS.IS", "KOZAL.IS", "PETKM.IS", "EKGYO.IS", "HEKTS.IS", 
+    "SASA.IS",  "ASTOR.IS", "ALARK.IS", "ARCLK.IS", "GUBRF.IS", "KRDMD.IS", "ODAS.IS", 
+    "OYAKC.IS", "SOKM.IS",  "TAVHL.IS", "PKART.IS", "TKFEN.IS", "TTKOM.IS", "TCELL.IS", 
+    "VESTL.IS", "MGROS.IS", "VAKBN.IS", "HALKB.IS", "ISGYO.IS", "DOHOL.IS", "KOZAA.IS", 
+    "IPEKE.IS", "BERA.IS",  "CIMSA.IS", "AKSA.IS",  "AKSEN.IS", "QUAGR.IS", "CANTE.IS",
+    "MIATK.IS", "REEDR.IS", "SDTTR.IS", "KONTR.IS", "EUPWR.IS", "GESAN.IS", "CWENE.IS"
+]
 
 def send_telegram(message: str):
     """Telegram'a HTML formatında bildirim gönderir."""
@@ -127,23 +106,33 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
 
     return kanal_renk, nokta_renk
 
-def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
-    """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) oluşturur."""
-    df = clean_df(df_1h)
-    if df.empty or len(df) < 15:
+def build_bist_hourly(df_15m: pd.DataFrame) -> pd.DataFrame:
+    """15 dakikalık barları tam saat başlarına (10:00, 11:00...) hizalar."""
+    if df_15m.empty or len(df_15m) < 8:
         return pd.DataFrame()
-    
-    df_copy = df.copy()
+    df_1h = df_15m.resample('1h', closed='left', label='left').agg({
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last'
+    }).dropna()
+    return df_1h
+
+def make_bist_4h_from_15m(df_15m: pd.DataFrame) -> pd.DataFrame:
+    """15m verisinden tam 09:00 ve 13:00 başlangıçlı kusursuz 4H barları oluşturur."""
+    if df_15m.empty or len(df_15m) < 16:
+        return pd.DataFrame()
+    df_copy = df_15m.copy()
     df_copy['date'] = df_copy.index.date
+    # 1. Mum: 10:00 - 12:45 (hour < 13)
+    # 2. Mum: 13:00 - 18:00 (hour >= 13)
     df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
-    
     df_4h = df_copy.groupby(['date', 'half']).agg({
         'Open': 'first',
         'High': 'max',
         'Low': 'min',
         'Close': 'last'
     })
-    
     new_idx = []
     for d, h in df_4h.index:
         hour_str = "09:00:00" if h == 1 else "13:00:00"
@@ -191,7 +180,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Pine script değerleri:
+    # Saf ECO değerleri:
     c_curr = float(stoch.iloc[-1])
     c_prev = float(stoch.iloc[-2])
     c_prev2 = float(stoch.iloc[-3]) if len(stoch) >= 3 else c_prev
@@ -200,7 +189,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     sig_type = None
     durum_metni = ""
 
-    # 1. CANLI MUMDA KESİŞİM (O an açık olan canlı mum)
+    # 1. CANLI MUMDA KESİŞİM (O an açık olan canlı mum, örn: TUPRS 13:00 4H mumu)
     if (c_prev < 10) and (c_curr > 10):
         target_idx = -1
         sig_type = "BUY"
@@ -225,14 +214,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
         c_st = float(stoch.iloc[target_idx])
         p_st = float(stoch.iloc[target_idx - 1])
 
-        # Buçuklu saatleri tam saat başı (:00) yapma düzeltmesi
-        if "Saat" in tf_label:
-            if getattr(candle_time, 'minute', 0) != 0:
-                candle_time = candle_time + pd.Timedelta(minutes=30)
-            time_str = candle_time.strftime('%H:00')
-        else:
-            time_str = candle_time.strftime('%d.%m.%Y')
-
+        time_str = candle_time.strftime('%d.%m.%Y') if "Günlük" in tf_label else candle_time.strftime('%H:%M')
         hisse_adi = symbol.replace(".IS", "")
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
 
@@ -256,30 +238,29 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     return None
 
 def analyze_ticker(symbol: str):
-    """Tek bir hisse için 1h, 4h ve 1d periyotlarını analiz eder."""
+    """15m verisinden 1h ve 4h barları kusursuz türetir, günlük veriyi de tarar."""
     signals = []
     
-    # 1. 1 Saatlik
-    df_1h = None
+    # 1. 15m verisi indirilerek tam saatlik (1h) ve tam seanslık (4h) barlar oluşturulur
     try:
-        df_1h = yf.download(symbol, period="1mo", interval="1h", progress=False)
-        s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
-        if s1h:
-            signals.append(s1h)
-    except Exception:
-        pass
-
-    # 2. 4 Saatlik
-    try:
-        if df_1h is not None and not df_1h.empty:
-            df_4h = make_bist_4h(df_1h)
+        df_15m = yf.download(symbol, period="1mo", interval="15m", progress=False)
+        clean_15m = clean_df(df_15m)
+        if not clean_15m.empty:
+            # 1 Saatlik
+            df_1h = build_bist_hourly(clean_15m)
+            s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
+            if s1h:
+                signals.append(s1h)
+            
+            # 4 Saatlik (Tam 13:00 başlangıçlı)
+            df_4h = make_bist_4h_from_15m(clean_15m)
             s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)")
             if s4h:
                 signals.append(s4h)
-    except Exception:
+    except Exception as e:
         pass
 
-    # 3. Günlük (1D)
+    # 2. Günlük (1D)
     try:
         df_1d = yf.download(symbol, period="6mo", interval="1d", progress=False)
         s1d = evaluate_eco(df_1d, symbol, "Günlük (1D)")
@@ -291,12 +272,11 @@ def analyze_ticker(symbol: str):
     return signals
 
 def main():
-    tickers = get_all_bist_tickers()
-    print(f"BIST Taraması Başlıyor ({len(tickers)} hisse; 1h, 4h, 1D)...")
+    print(f"BIST Taraması Başlıyor ({len(BIST_TICKERS)} hisse; 1h, 4h, 1D)...")
     toplam = 0
 
     with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(analyze_ticker, ticker): ticker for ticker in tickers}
+        futures = {executor.submit(analyze_ticker, ticker): ticker for ticker in BIST_TICKERS}
         for future in as_completed(futures):
             try:
                 results = future.result()
