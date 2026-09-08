@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     # 7 gün 24 saat boyunca her 30 dakikada bir otomatik çalışır
-    - cron: '*/20 * * * *'
+    - cron: '*/40 * * * *'
 
 jobs:
   kripto_tarama:
