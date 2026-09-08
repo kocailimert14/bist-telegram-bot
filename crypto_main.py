@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import numpy as np
 import requests
 import pandas as pd
@@ -28,8 +29,8 @@ TIMEFRAMES = [
     ("1h", "1 Saat (1h)")
 ]
 
-def send_telegram(message: str):
-    """Telegram'a HTML formatında bildirim gönderir."""
+def send_telegram(message: str) -> bool:
+    """Telegram'a HTML formatında güvenli bildirim gönderir."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID, 
@@ -40,10 +41,17 @@ def send_telegram(message: str):
         res = requests.post(url, json=payload, timeout=15)
         if res.status_code == 200:
             print("Telegram bildirimi iletildi.")
+            return True
+        elif res.status_code == 429:
+            retry_after = res.json().get("parameters", {}).get("retry_after", 30)
+            print(f"Telegram Flood Uyarısı: {retry_after} saniye beklenmeli!")
+            return False
         else:
             print(f"Telegram hatası ({res.status_code}): {res.text}")
+            return False
     except Exception as e:
         print(f"Telegram bağlantı hatası: {e}")
+        return False
 
 def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
     """Binance resmi engelsiz sunucusu üzerinden TradingView ile birebir mumları çeker."""
@@ -99,54 +107,55 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
 
 def calculate_slingshot(df: pd.DataFrame, idx: int):
     """Sling Shot System: Düz Kanal Rengi ve Noktasal Trend Rengi hesabı."""
-    close = df['Close'].squeeze()
-    high = df['High'].squeeze()
-    low = df['Low'].squeeze()
+    try:
+        close = df['Close'].squeeze()
+        high = df['High'].squeeze()
+        low = df['Low'].squeeze()
 
-    prev_close = close.shift(1)
-    tr1 = high - low
-    tr2 = (high - prev_close).abs()
-    tr3 = (low - prev_close).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        prev_close = close.shift(1)
+        tr1 = high - low
+        tr2 = (high - prev_close).abs()
+        tr3 = (low - prev_close).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-    ma1 = close.ewm(span=13, adjust=False).mean()
-    ma2 = close.ewm(span=21, adjust=False).mean()
-    ma3 = close.ewm(span=34, adjust=False).mean()
+        ma1 = close.ewm(span=13, adjust=False).mean()
+        ma2 = close.ewm(span=21, adjust=False).mean()
+        ma3 = close.ewm(span=34, adjust=False).mean()
 
-    ma = close.ewm(span=89, adjust=False).mean()
-    rangema = tr.ewm(span=89, adjust=False).mean()
+        ma = close.ewm(span=89, adjust=False).mean()
+        rangema = tr.ewm(span=89, adjust=False).mean()
 
-    upper = ma + rangema * 0.5
-    lower = ma - rangema * 0.5
+        upper = ma + rangema * 0.5
+        lower = ma - rangema * 0.5
 
-    v_ma1 = float(ma1.iloc[idx])
-    v_ma2 = float(ma2.iloc[idx])
-    v_ma3 = float(ma3.iloc[idx])
-    v_upper = float(upper.iloc[idx])
-    v_lower = float(lower.iloc[idx])
+        v_ma1 = float(ma1.iloc[idx])
+        v_ma2 = float(ma2.iloc[idx])
+        v_ma3 = float(ma3.iloc[idx])
+        v_upper = float(upper.iloc[idx])
+        v_lower = float(lower.iloc[idx])
 
-    # Düz Trend Kanalı Rengi
-    if (v_ma1 > v_upper) and (v_ma2 > v_upper) and (v_ma3 > v_upper):
-        kanal_renk = "🟢 Yeşil"
-    elif (v_ma1 < v_lower) and (v_ma2 < v_lower) and (v_ma3 < v_lower):
-        kanal_renk = "🔴 Kırmızı"
-    else:
-        kanal_renk = "🔵 Mavi"
+        if (v_ma1 > v_upper) and (v_ma2 > v_upper) and (v_ma3 > v_upper):
+            kanal_renk = "🟢 Yeşil"
+        elif (v_ma1 < v_lower) and (v_ma2 < v_lower) and (v_ma3 < v_lower):
+            kanal_renk = "🔴 Kırmızı"
+        else:
+            kanal_renk = "🔵 Mavi"
 
-    # Noktasal Trend Çizgileri Rengi
-    if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
-        nokta_renk = "🟢 Yeşil"
-    elif (v_ma1 < v_ma2) and (v_ma2 < v_lower if False else v_ma2 < v_ma3):
-        nokta_renk = "🔴 Kırmızı"
-    else:
-        nokta_renk = "🟡 Sarı"
+        if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
+            nokta_renk = "🟢 Yeşil"
+        elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
+            nokta_renk = "🔴 Kırmızı"
+        else:
+            nokta_renk = "🟡 Sarı"
 
-    return kanal_renk, nokta_renk
+        return kanal_renk, nokta_renk
+    except Exception:
+        return "Belirsiz", "Belirsiz"
 
 def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     """TradingView Evan Cabral Oscillators (ECO) ve SlingShot teyidi."""
     if df is None or df.empty or len(df) < 20:
-        return []
+        return None
 
     high = df['High'].squeeze()
     low = df['Low'].squeeze()
@@ -182,65 +191,69 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Pine script kesişim şartları
-    cross_up = (stoch.shift(1) < 10) & (stoch > 10)
-    cross_down = (stoch.shift(1) > 90) & (stoch < 90)
+    c_curr = float(stoch.iloc[-1])
+    c_prev = float(stoch.iloc[-2])
+    c_prev2 = float(stoch.iloc[-3]) if len(stoch) >= 3 else c_prev
 
-    signals = []
     coin_name = symbol.replace("USDT", "")
-    now = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
-    candle_duration = pd.Timedelta(hours=1)
 
-    for idx in [-1, -2]:
-        sig_type = None
-        if cross_up.iloc[idx]:
-            sig_type = "BUY"
-        elif cross_down.iloc[idx]:
-            sig_type = "SELL"
+    # 1. AL SİNYALİ
+    if (c_prev < 10 and c_curr > 10) or (c_prev2 < 10 and c_prev > 10):
+        if c_prev < 10 and c_curr > 10:
+            target_idx = -1
+            durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
+        else:
+            target_idx = -2
+            durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
 
-        if sig_type is not None:
-            candle_time = df.index[idx]
-            if getattr(candle_time, 'tzinfo', None) is not None:
-                candle_time = candle_time.tz_convert('+03:00').tz_localize(None)
+        candle_time = df.index[target_idx]
+        candle_price = float(close.iloc[target_idx])
+        time_str = candle_time.strftime('%H:%M')
+        kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
 
-            if idx == -2:
-                # Kapanmış saatlik mumun üzerinden 20 dakikadan fazla geçmişse ESKİDİR, gönderme!
-                candle_close_time = candle_time + candle_duration
-                minutes_since_close = (now - candle_close_time).total_seconds() / 60.0
-                if minutes_since_close > 20.0:
-                    continue
-                durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
-            else:
-                durum_metni = "⚠️ CANLI MUM (Kapanış Beklenmedi / Anlık)"
+        return (
+            f"🟢 <b>KRİPTO AL SİNYALİ (Evan Cabral - ECO)</b>\n\n"
+            f"🪙 <b>Koin:</b> #{coin_name}/USDT\n"
+            f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
+            f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
+            f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
+            f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n"
+            f"📊 <b>DMI-Stoch:</b> {stoch.iloc[target_idx]:.1f} (Önceki: {stoch.iloc[target_idx-1]:.1f})\n"
+            f"🎯 <b>Tetikleyici:</b> DMI-Stoch 10 seviyesini yukarı kesti ('B')\n\n"
+            f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
+            f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
+            f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
+        )
 
-            candle_price = float(close.iloc[idx])
-            c_st = float(stoch.iloc[idx])
-            p_st = float(stoch.iloc[idx - 1])
-            time_str = candle_time.strftime('%H:%M')
+    # 2. SAT SİNYALİ
+    elif (c_prev > 90 and c_curr < 90) or (c_prev2 > 90 and c_prev < 90):
+        if c_prev > 90 and c_curr < 90:
+            target_idx = -1
+            durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
+        else:
+            target_idx = -2
+            durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
 
-            # Sling Shot Trend Teyitleri
-            kanal_renk, nokta_renk = calculate_slingshot(df, idx)
+        candle_time = df.index[target_idx]
+        candle_price = float(close.iloc[target_idx])
+        time_str = candle_time.strftime('%H:%M')
+        kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
 
-            tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
-            trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
+        return (
+            f"🔴 <b>KRİPTO SAT SİNYALİ (Evan Cabral - ECO)</b>\n\n"
+            f"🪙 <b>Koin:</b> #{coin_name}/USDT\n"
+            f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
+            f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
+            f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
+            f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n"
+            f"📊 <b>DMI-Stoch:</b> {stoch.iloc[target_idx]:.1f} (Önceki: {stoch.iloc[target_idx-1]:.1f})\n"
+            f"🎯 <b>Tetikleyici:</b> DMI-Stoch 90 seviyesini aşağı kesti ('S')\n\n"
+            f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
+            f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
+            f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
+        )
 
-            msg = (
-                f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
-                f"🪙 <b>Koin:</b> #{coin_name}/USDT\n"
-                f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
-                f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-                f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
-                f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n"
-                f"📊 <b>DMI-Stoch:</b> {c_st:.1f} (Önceki: {p_st:.1f})\n"
-                f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
-                f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
-                f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
-                f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
-            )
-            signals.append(msg)
-            break
-
-    return signals
+    return None
 
 def scan_single_coin(symbol: str):
     """Tek bir koin için sadece 1h periyodunu tarar."""
@@ -248,28 +261,36 @@ def scan_single_coin(symbol: str):
     try:
         for tf_key, label in TIMEFRAMES:
             df = get_binance_klines(symbol, tf_key)
-            sigs = evaluate_eco_crypto(df, symbol, label)
-            if sigs:
-                found_signals.extend(sigs)
+            sig = evaluate_eco_crypto(df, symbol, label)
+            if sig:
+                found_signals.append(sig)
     except Exception as e:
         print(f"{symbol} analiz hatası: {e}")
     return found_signals
 
 def main():
     print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; Sadece 1 Saatlik)...")
-    toplam = 0
+    all_signals = []
 
+    # 1. Hisseler/koinler 10 parçacıkla paralel ve hızlıca taranır (20 sn)
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(scan_single_coin, coin): coin for coin in COINS}
         for future in as_completed(futures):
             try:
                 sigs = future.result()
                 if sigs:
-                    for msg in sigs:
-                        send_telegram(msg)
-                        toplam += 1
+                    all_signals.extend(sigs)
             except Exception as e:
                 print(f"İş parçacığı hatası: {e}")
+
+    # 2. Sinyaller Telegram'ın saniyelik limitine takılmadan 1.5 saniye arayla güvenle gönderilir
+    toplam = 0
+    for i, sig in enumerate(all_signals):
+        success = send_telegram(sig)
+        if success:
+            toplam += 1
+        if i < len(all_signals) - 1:
+            time.sleep(1.5)
 
     print(f"Tarama bitti! Üretilen yeni sinyal sayısı: {toplam}")
 
