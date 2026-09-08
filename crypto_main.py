@@ -23,9 +23,9 @@ COINS = [
     "SANDUSDT", "ZECUSDT", "HYPEUSDT", "GRAMUSDT", "SUSDT"
 ]
 
+# Sadece 1 Saatlik Mumlar
 TIMEFRAMES = [
-    ("15m", "15 Dakika (15m)"),
-    ("1h",  "1 Saat (1h)")
+    ("1h", "1 Saat (1h)")
 ]
 
 def send_telegram(message: str):
@@ -67,7 +67,7 @@ def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
         pass
 
     # Yedek: Bybit
-    interval_map = {"15m": "15", "1h": "60"}
+    interval_map = {"1h": "60"}
     bb_int = interval_map.get(interval, "60")
     url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={bb_int}&limit=200"
     try:
@@ -136,14 +136,14 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     # Noktasal Trend Çizgileri Rengi
     if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
         nokta_renk = "🟢 Yeşil"
-    elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
+    elif (v_ma1 < v_ma2) and (v_ma2 < v_lower if False else v_ma2 < v_ma3):
         nokta_renk = "🔴 Kırmızı"
     else:
         nokta_renk = "🟡 Sarı"
 
     return kanal_renk, nokta_renk
 
-def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str):
+def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str):
     """TradingView Evan Cabral Oscillators (ECO) ve SlingShot teyidi."""
     if df is None or df.empty or len(df) < 20:
         return []
@@ -182,13 +182,14 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
+    # Pine script kesişim şartları
     cross_up = (stoch.shift(1) < 10) & (stoch > 10)
     cross_down = (stoch.shift(1) > 90) & (stoch < 90)
 
     signals = []
     coin_name = symbol.replace("USDT", "")
     now = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
-    candle_duration = pd.Timedelta(minutes=15) if tf_key == "15m" else pd.Timedelta(hours=1)
+    candle_duration = pd.Timedelta(hours=1)
 
     for idx in [-1, -2]:
         sig_type = None
@@ -203,9 +204,10 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
                 candle_time = candle_time.tz_convert('+03:00').tz_localize(None)
 
             if idx == -2:
+                # Kapanmış saatlik mumun üzerinden 20 dakikadan fazla geçmişse ESKİDİR, gönderme!
                 candle_close_time = candle_time + candle_duration
                 minutes_since_close = (now - candle_close_time).total_seconds() / 60.0
-                if minutes_since_close > 15.0:
+                if minutes_since_close > 20.0:
                     continue
                 durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
             else:
@@ -241,12 +243,12 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
     return signals
 
 def scan_single_coin(symbol: str):
-    """Tek bir koin için 15m ve 1h periyotlarını tarar."""
+    """Tek bir koin için sadece 1h periyodunu tarar."""
     found_signals = []
     try:
         for tf_key, label in TIMEFRAMES:
             df = get_binance_klines(symbol, tf_key)
-            sigs = evaluate_eco_crypto(df, symbol, label, tf_key)
+            sigs = evaluate_eco_crypto(df, symbol, label)
             if sigs:
                 found_signals.extend(sigs)
     except Exception as e:
@@ -254,7 +256,7 @@ def scan_single_coin(symbol: str):
     return found_signals
 
 def main():
-    print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; 15m, 1h)...")
+    print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; Sadece 1 Saatlik)...")
     toplam = 0
 
     with ThreadPoolExecutor(max_workers=10) as executor:
