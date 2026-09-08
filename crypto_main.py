@@ -143,11 +143,9 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
 
     signals = []
     coin_name = symbol.replace("USDT", "")
-    now = pd.Timestamp.now(tz='UTC') + pd.Timedelta(hours=3)
-
-    # Yalnızca 2 mum incelenir:
-    # idx = -1 : O an açık olan CANLI MUM (Anlık sinyal)
-    # idx = -2 : Hemen bir önceki KAPANMIŞ MUM
+    
+    # Timezone hatasını önleyen sabit TSİ zamanı
+    now = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
     candle_duration = pd.Timedelta(minutes=15) if tf_key == "15m" else pd.Timedelta(hours=1)
 
     for idx in [-1, -2]:
@@ -159,13 +157,14 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
 
         if sig_type is not None:
             candle_time = df.index[idx]
+            if getattr(candle_time, 'tzinfo', None) is not None:
+                candle_time = candle_time.tz_convert('+03:00').tz_localize(None)
 
-            # Eğer kapanmış mumsa (-2), kapanış üzerinden 15 dakikadan fazla geçmişse ESKİDİR, gönderme!
             if idx == -2:
                 candle_close_time = candle_time + candle_duration
                 minutes_since_close = (now - candle_close_time).total_seconds() / 60.0
                 if minutes_since_close > 15.0:
-                    continue  # Eski sinyal, atla!
+                    continue
                 durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
             else:
                 durum_metni = "⚠️ CANLI MUM (Kapanış Beklenmedi / Anlık)"
@@ -196,11 +195,14 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
 def scan_single_coin(symbol: str):
     """Tek bir koin için 15m ve 1h periyotlarını tarar."""
     found_signals = []
-    for tf_key, label in TIMEFRAMES:
-        df = get_binance_klines(symbol, tf_key)
-        sigs = evaluate_eco_crypto(df, symbol, label, tf_key)
-        if sigs:
-            found_signals.extend(sigs)
+    try:
+        for tf_key, label in TIMEFRAMES:
+            df = get_binance_klines(symbol, tf_key)
+            sigs = evaluate_eco_crypto(df, symbol, label, tf_key)
+            if sigs:
+                found_signals.extend(sigs)
+    except Exception as e:
+        print(f"{symbol} analiz hatası: {e}")
     return found_signals
 
 def main():
@@ -210,11 +212,14 @@ def main():
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(scan_single_coin, coin): coin for coin in COINS}
         for future in as_completed(futures):
-            sigs = future.result()
-            if sigs:
-                for msg in sigs:
-                    send_telegram(msg)
-                    toplam += 1
+            try:
+                sigs = future.result()
+                if sigs:
+                    for msg in sigs:
+                        send_telegram(msg)
+                        toplam += 1
+            except Exception as e:
+                print(f"İş parçacığı hatası: {e}")
 
     print(f"Tarama bitti! Üretilen yeni sinyal sayısı: {toplam}")
 
