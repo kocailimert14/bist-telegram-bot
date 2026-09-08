@@ -43,14 +43,13 @@ def send_telegram(message: str):
         print(f"Telegram bağlantı hatası: {e}")
 
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    """yfinance verisini temizler ve MUTLAKA Türkiye Saatine (TSİ) kilitler."""
+    """yfinance verisini temizler ve Türkiye Saatine (TSİ) kilitler."""
     if df is None or df.empty:
         return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.dropna(subset=['High', 'Low', 'Close'])
     
-    # Saat dilimini Türkiye Saatine (UTC+3) kilitliyoruz
     if getattr(df.index, 'tz', None) is not None:
         df.index = df.index.tz_convert('Europe/Istanbul')
     else:
@@ -94,7 +93,6 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     v_upper = float(upper.iloc[idx])
     v_lower = float(lower.iloc[idx])
 
-    # Düz Trend Kanalı Rengi
     if (v_ma1 > v_upper) and (v_ma2 > v_upper) and (v_ma3 > v_upper):
         kanal_renk = "🟢 Yeşil"
     elif (v_ma1 < v_lower) and (v_ma2 < v_lower) and (v_ma3 < v_lower):
@@ -102,7 +100,6 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     else:
         kanal_renk = "🔵 Mavi"
 
-    # Noktasal Trend Çizgileri Rengi
     if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
         nokta_renk = "🟢 Yeşil"
     elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
@@ -112,34 +109,24 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
 
     return kanal_renk, nokta_renk
 
-def build_bist_hourly(clean_15m: pd.DataFrame) -> pd.DataFrame:
-    """15 dakikalık barları tam saat başlarına (10:00, 11:00...) hizalar."""
-    if clean_15m.empty or len(clean_15m) < 8:
+def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
+    """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) oluşturur."""
+    df = clean_df(df_1h)
+    if df.empty or len(df) < 15:
         return pd.DataFrame()
-    df_1h = clean_15m.resample('1h', closed='left', label='left').agg({
-        'Open': 'first',
-        'High': 'max',
-        'Low': 'min',
-        'Close': 'last'
-    }).dropna()
-    return df_1h
-
-def make_bist_4h_from_15m(clean_15m: pd.DataFrame) -> pd.DataFrame:
-    """15m verisinden tam TSİ 09:00 ve 13:00 başlangıçlı kusursuz 4H barları oluşturur."""
-    if clean_15m.empty or len(clean_15m) < 16:
-        return pd.DataFrame()
-    df_copy = clean_15m.copy()
+    
+    df_copy = df.copy()
     df_copy['date'] = df_copy.index.date
-    # TSİ Saatine göre tam 13:00 ayrımı:
-    # 1. Mum: 10:00 - 12:45 (hour < 13)
-    # 2. Mum: 13:00 - 18:00 (hour >= 13) -> TUPRS'ın canlı mumu buradadır!
-    df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
+    # BIST saatlik verisinde 09:30-12:30 sabah (1), 13:30 sonrası öğleden sonra (2)
+    df_copy['half'] = np.where(df_copy.index.hour <= 12, 1, 2)
+    
     df_4h = df_copy.groupby(['date', 'half']).agg({
         'Open': 'first',
         'High': 'max',
         'Low': 'min',
         'Close': 'last'
     })
+    
     new_idx = []
     for d, h in df_4h.index:
         hour_str = "09:00:00" if h == 1 else "13:00:00"
@@ -148,9 +135,10 @@ def make_bist_4h_from_15m(clean_15m: pd.DataFrame) -> pd.DataFrame:
     return df_4h
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
-    """Pine Script ECO göstergesini saf mantığıyla hesaplar."""
+    """Pine Script ECO göstergesini hesaplar."""
+    df = clean_df(df)
     if df is None or df.empty or len(df) < 10:
-        return None
+        return None, None
 
     high = df['High'].squeeze()
     low = df['Low'].squeeze()
@@ -195,7 +183,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     sig_type = None
     durum_metni = ""
 
-    # 1. CANLI MUMDA KESİŞİM (O an açık olan canlı mum, örn: TUPRS 13:00 4H mumu)
+    # 1. CANLI MUMDA KESİŞİM (O an açık olan canlı mum, örn: TUPRS 13:00 mumu)
     if (c_prev < 10) and (c_curr > 10):
         target_idx = -1
         sig_type = "BUY"
@@ -214,20 +202,28 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
         sig_type = "SELL"
         durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
 
+    diag_info = {"c_curr": c_curr, "c_prev": c_prev, "c_prev2": c_prev2, "time": df.index[-1].strftime('%H:%M')}
+
     if sig_type is not None:
         candle_time = df.index[target_idx]
         candle_price = float(close.iloc[target_idx])
         c_st = float(stoch.iloc[target_idx])
         p_st = float(stoch.iloc[target_idx - 1])
 
-        time_str = candle_time.strftime('%d.%m.%Y') if "Günlük" in tf_label else candle_time.strftime('%H:%M')
+        if "Saat" in tf_label:
+            if getattr(candle_time, 'minute', 0) != 0:
+                candle_time = candle_time + pd.Timedelta(minutes=30)
+            time_str = candle_time.strftime('%H:00')
+        else:
+            time_str = candle_time.strftime('%d.%m.%Y')
+
         hisse_adi = symbol.replace(".IS", "")
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
 
         tag = "🟢 <b>BIST AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>BIST SAT SİNYALİ</b>"
         trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
 
-        return (
+        msg = (
             f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
             f"📌 <b>Hisse:</b> #{hisse_adi}\n"
             f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
@@ -240,59 +236,84 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
             f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
         )
+        return msg, diag_info
 
-    return None
+    return None, diag_info
 
 def analyze_ticker(symbol: str):
-    """15m verisinden 1h ve 4h barları kusursuz türetir, günlük veriyi de tarar."""
+    """Tek bir hisse için 1h, 4h ve 1d periyotlarını analiz eder."""
     signals = []
+    tuprs_diag = None
     
-    # 1. 15m verisi indirilerek tam saatlik (1h) ve tam seanslık (4h) barlar oluşturulur
+    # 1. 1 Saatlik
+    df_1h = None
     try:
-        df_15m = yf.download(symbol, period="1mo", interval="15m", progress=False)
-        clean_15m = clean_df(df_15m)
-        if not clean_15m.empty:
-            # 1 Saatlik
-            df_1h = build_bist_hourly(clean_15m)
-            s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
-            if s1h:
-                signals.append(s1h)
-            
-            # 4 Saatlik (Tam 13:00 başlangıçlı)
-            df_4h = make_bist_4h_from_15m(clean_15m)
-            s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)")
+        df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
+        s1h, _ = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
+        if s1h:
+            signals.append(s1h)
+    except Exception:
+        pass
+
+    # 2. 4 Saatlik
+    try:
+        if df_1h is not None and not df_1h.empty:
+            df_4h = make_bist_4h(df_1h)
+            s4h, diag = evaluate_eco(df_4h, symbol, "4 Saat (4h)")
+            if symbol == "TUPRS.IS":
+                tuprs_diag = diag
             if s4h:
                 signals.append(s4h)
     except Exception:
         pass
 
-    # 2. Günlük (1D)
+    # 3. Günlük (1D)
     try:
         df_1d = yf.download(symbol, period="6mo", interval="1d", progress=False)
-        clean_1d = clean_df(df_1d)
-        s1d = evaluate_eco(clean_1d, symbol, "Günlük (1D)")
+        s1d, _ = evaluate_eco(df_1d, symbol, "Günlük (1D)")
         if s1d:
             signals.append(s1d)
     except Exception:
         pass
 
-    return signals
+    return signals, tuprs_diag
 
 def main():
     print(f"BIST Taraması Başlıyor ({len(BIST_TICKERS)} hisse; 1h, 4h, 1D)...")
     toplam = 0
+    tuprs_debug = None
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(analyze_ticker, ticker): ticker for ticker in BIST_TICKERS}
         for future in as_completed(futures):
             try:
-                results = future.result()
+                results, diag = future.result()
+                if diag is not None:
+                    tuprs_debug = diag
                 if results:
                     for sig in results:
                         send_telegram(sig)
                         toplam += 1
             except Exception as e:
                 print(f"Hisse analiz hatası: {e}")
+
+    # Eğer sinyal üretilmediyse Telegram'a TUPRS teşhis raporu gönder
+    if toplam == 0:
+        t_info = "Veri okunamadı"
+        if tuprs_debug:
+            t_info = (
+                f"Son Mum ({tuprs_debug.get('time')}): <code>{tuprs_debug.get('c_curr', 0):.1f}</code> | "
+                f"Önceki Mum: <code>{tuprs_debug.get('c_prev', 0):.1f}</code>"
+            )
+        rapor = (
+            f"📊 <b>BIST Tarama Durum Raporu</b>\n\n"
+            f"✅ {len(BIST_TICKERS)} hisse (1h, 4h, 1D) başarıyla incelendi.\n"
+            f"🎯 10 veya 90 seviyesini kıran sinyal sayısı: <b>0</b>\n\n"
+            f"🔍 <b>TUPRS 4 Saatlik Değerleri:</b>\n"
+            f"• {t_info}\n\n"
+            f"<i>(Osilatör 90'ı aşağı kırdığında veya 10'u yukarı kırdığında kart olarak düşecektir.)</i>"
+        )
+        send_telegram(rapor)
 
     print(f"BIST Taraması bitti! Bulunan toplam sinyal: {toplam}")
 
