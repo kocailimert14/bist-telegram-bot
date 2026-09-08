@@ -115,7 +115,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
 
     if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
         nokta_renk = "🟢 Yeşil"
-    elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
+    elif (v_ma1 < v_ma2) and (v_ma2 < v_lower if False else v_ma2 < v_ma3):
         nokta_renk = "🔴 Kırmızı"
     else:
         nokta_renk = "🟡 Sarı"
@@ -196,9 +196,7 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Pine script saf kesişim kuralları:
-    # crossUp = Stoch < 10 and Stoch > 10 ? 1 : 0
-    # crossDown = Stoch > 90 and Stoch < 90 ? 1 : 0
+    # Pine script saf kesişim kuralları
     cross_up = (stoch.shift(1) < 10) & (stoch > 10)
     cross_down = (stoch.shift(1) > 90) & (stoch < 90)
 
@@ -219,7 +217,7 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
         target_idx = -1
         sig_type = "SELL"
         durum_metni = "⚠️ CANLI MUM (Kapanış Beklenmedi / Anlık)"
-    # 2. Eğer canlı mumda kesişim yoksa, hemen bir önceki KAPANMIŞ MUMU kontrol et (iloc[-2])
+    # 2. Eğer canlı mumda kesişim yoksa, bir önceki KAPANMIŞ MUMU kontrol et (iloc[-2])
     elif cross_up.iloc[-2]:
         target_idx = -2
         sig_type = "BUY"
@@ -234,18 +232,20 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
         if getattr(candle_time, 'tzinfo', None) is not None:
             candle_time = candle_time.tz_convert('+03:00').tz_localize(None)
 
-        # Kapanmış mum (-2) için zaman aşımı kontrolü: Aradan uzun zaman geçmiş eski sinyali atma
+        # Kapanmış mum (-2) için gerçek periyot süreleri:
         if target_idx == -2:
             if tf_key == "1h":
                 close_time = candle_time + pd.Timedelta(hours=1)
-                if (now - close_time).total_seconds() / 60.0 > 25.0:
+                # 1 saatlik mum kapandıktan sonraki 60 dakika boyunca geçerlidir
+                if (now - close_time).total_seconds() / 60.0 > 60.0:
                     return []
             elif tf_key == "4h":
                 close_time = candle_time + pd.Timedelta(hours=4)
-                if (now - close_time).total_seconds() / 60.0 > 30.0:
+                # 4 saatlik mum kapandıktan sonraki 240 dakika (4 saat) boyunca geçerlidir
+                if (now - close_time).total_seconds() / 60.0 > 240.0:
                     return []
             elif tf_key == "1d":
-                if (now.date() - candle_time.date()).days > 1:
+                if (now.date() - candle_time.date()).days > 3:
                     return []
 
         candle_price = float(close.iloc[target_idx])
@@ -285,9 +285,9 @@ def main():
 
     for i, chunk in enumerate(chunks, 1):
         try:
-            # 15m verisi indirilip 1h ve 4h mumları tam saat başı (:00) olarak buradan üretilir
-            data_15m = yf.download(chunk, period="1mo", interval="15m", group_by="ticker", threads=True, progress=False)
-            data_1d = yf.download(chunk, period="1y", interval="1d", group_by="ticker", threads=True, progress=False)
+            # Sadece son 7 günlük 15m verisi (Çok daha hızlı: 25-30 saniye sürer)
+            data_15m = yf.download(chunk, period="7d", interval="15m", group_by="ticker", threads=True, progress=False)
+            data_1d = yf.download(chunk, period="6mo", interval="1d", group_by="ticker", threads=True, progress=False)
 
             for ticker in chunk:
                 try:
@@ -311,7 +311,6 @@ def main():
                     if raw_1d is not None and not raw_1d.empty:
                         clean_1d = raw_1d.dropna(subset=['High', 'Low', 'Close'])
                         if len(clean_1d) >= 15:
-                            # Günlük Tarama
                             for msg in evaluate_eco_bist(clean_1d, ticker, "Günlük (1D)", "1d"):
                                 send_telegram(msg)
                                 toplam += 1
