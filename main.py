@@ -34,12 +34,13 @@ def get_all_bist_tickers():
     except Exception as e:
         print(f"Dinamik liste hatası: {e}")
 
+    # Geniş Yedek Liste
     return [
         "THYAO.IS", "ASELS.IS", "EREGL.IS", "KCHOL.IS", "TUPRS.IS", "GARAN.IS", 
         "AKBNK.IS", "YKBNK.IS", "ISCTR.IS", "BIMAS.IS", "SISE.IS",  "SAHOL.IS", 
         "FROTO.IS", "TOASO.IS", "ENKAI.IS", "PGSUS.IS", "KOZAL.IS", "PETKM.IS", 
         "EKGYO.IS", "HEKTS.IS", "SASA.IS",  "ASTOR.IS", "ALARK.IS", "ARCLK.IS", 
-        "GUBRF.IS", "KRDMD.IS", "ODAS.IS",  "OYAKC.IS", "SOKM.IS",  "TAVHL.IS",
+        "GUBRF.IS", "KRDMD.IS", "ODAS.IS",  "OYAKC.IS", "SOKM.IS",  "TAVHL.IS", 
         "PKART.IS", "TKFEN.IS", "TTKOM.IS", "TCELL.IS", "VESTL.IS", "MGROS.IS"
     ]
 
@@ -123,7 +124,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     return kanal_renk, nokta_renk
 
 def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
-    """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) oluşturur."""
+    """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) birebir oluşturur."""
     df = clean_df(df_1h)
     if df.empty or len(df) < 15:
         return pd.DataFrame()
@@ -186,6 +187,7 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
+    # Pine script kesişim şartları
     cross_up = (stoch.shift(1) < 10) & (stoch > 10)
     cross_down = (stoch.shift(1) > 90) & (stoch < 90)
 
@@ -193,9 +195,7 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
     hisse_adi = symbol.replace(".IS", "")
     now = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
 
-    if tf_key == "15m":
-        candle_duration = pd.Timedelta(minutes=15)
-    elif tf_key == "1h":
+    if tf_key == "1h":
         candle_duration = pd.Timedelta(hours=1)
     elif tf_key == "4h":
         candle_duration = pd.Timedelta(hours=4)
@@ -233,7 +233,6 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
             p_st = float(stoch.iloc[idx - 1])
             time_str = candle_time.strftime('%d.%m.%Y') if tf_key == "1d" else candle_time.strftime('%H:%M')
 
-            # Sling Shot Trend Teyitleri
             kanal_renk, nokta_renk = calculate_slingshot(df, idx)
 
             tag = "🟢 <b>BIST AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>BIST SAT SİNYALİ</b>"
@@ -258,18 +257,10 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
     return signals
 
 def analyze_ticker(symbol: str):
-    """15m, 1h, 4h ve 1d periyotlarını analiz eder."""
+    """Sadece 1h, 4h ve 1d periyotlarını analiz eder."""
     signals = []
     
-    # 1. 15 Dakika
-    try:
-        df_15m = yf.download(symbol, period="1mo", interval="15m", progress=False)
-        s15 = evaluate_eco_bist(df_15m, symbol, "15 Dakika (15m)", "15m")
-        if s15: signals.extend(s15)
-    except Exception:
-        pass
-
-    # 2. 1 Saat
+    # 1. 1 Saat
     df_1h = None
     try:
         df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
@@ -278,7 +269,7 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
-    # 3. 4 Saat (09:00 - 13:00 ve 13:00 - 18:10 TradingView Uyumlu)
+    # 2. 4 Saat (09:00 - 13:00 ve 13:00 - 18:10 TradingView Uyumlu)
     try:
         if df_1h is not None and not df_1h.empty:
             df_4h = make_bist_4h(df_1h)
@@ -287,7 +278,7 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
-    # 4. Günlük (1D)
+    # 3. Günlük (1D)
     try:
         df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
         s1d = evaluate_eco_bist(df_1d, symbol, "Günlük (1D)", "1d")
@@ -299,7 +290,7 @@ def analyze_ticker(symbol: str):
 
 def main():
     tickers = get_all_bist_tickers()
-    print(f"BIST Evan Cabral (ECO) Taraması Başlıyor ({len(tickers)} hisse; 15m, 1h, 4h, 1D)...")
+    print(f"BIST Evan Cabral (ECO) Taraması Başlıyor ({len(tickers)} hisse; 1h, 4h, 1D)...")
     toplam = 0
 
     with ThreadPoolExecutor(max_workers=10) as executor:
