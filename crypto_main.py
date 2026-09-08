@@ -269,10 +269,15 @@ def scan_single_coin(symbol: str):
     return found_signals
 
 def main():
-    print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; Sadece 1 Saatlik)...")
+    # GECE SESSİZ MOD KORUMASI (Saat 00:00 - 08:00 TSİ arası kesinlikle çalışmaz)
+    now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
+    if 0 <= now_tsi.hour < 8:
+        print(f"Gece sessiz mod aktif (Saat: {now_tsi.strftime('%H:%M')} TSİ). Tarama yapılmıyor.")
+        return
+
+    print(f"Kripto Evan Cabral (ECO) Taraması Başlıyor ({len(COINS)} Koin; 1 Saatlik)...")
     all_signals = []
 
-    # 1. Hisseler/koinler 10 parçacıkla paralel ve hızlıca taranır (20 sn)
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(scan_single_coin, coin): coin for coin in COINS}
         for future in as_completed(futures):
@@ -283,7 +288,7 @@ def main():
             except Exception as e:
                 print(f"İş parçacığı hatası: {e}")
 
-    # 2. Sinyaller Telegram'ın saniyelik limitine takılmadan 1.5 saniye arayla güvenle gönderilir
+    # Sinyalleri Telegram flood limitine takılmadan 1.5 saniye arayla güvenle gönder
     toplam = 0
     for i, sig in enumerate(all_signals):
         success = send_telegram(sig)
