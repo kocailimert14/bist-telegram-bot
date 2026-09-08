@@ -67,15 +67,19 @@ def extract_ticker_df(batch_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     if not isinstance(batch_df.columns, pd.MultiIndex):
         return batch_df.dropna(subset=['High', 'Low', 'Close'])
     
-    # Seviye 0 kontrolü
-    if ticker in batch_df.columns.levels[0]:
-        sub = batch_df[ticker].copy()
-        return sub.dropna(subset=['High', 'Low', 'Close'])
-    
-    # Seviye 1 kontrolü (Güncel yfinance yapısı)
-    if ticker in batch_df.columns.levels:
-        sub = batch_df.xs(ticker, axis=1, level=1).copy()
-        return sub.dropna(subset=['High', 'Low', 'Close'])
+    try:
+        if ticker in batch_df.columns.get_level_values(0):
+            sub = batch_df[ticker].copy()
+            return sub.dropna(subset=['High', 'Low', 'Close'])
+    except Exception:
+        pass
+        
+    try:
+        if ticker in batch_df.columns.get_level_values(1):
+            sub = batch_df.xs(ticker, axis=1, level=1).copy()
+            return sub.dropna(subset=['High', 'Low', 'Close'])
+    except Exception:
+        pass
         
     return pd.DataFrame()
 
@@ -125,7 +129,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
 
     if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
         nokta_renk = "🟢 Yeşil"
-    elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
+    elif (v_ma1 < v_ma2) and (v_ma2 < v_lower if False else v_ma2 < v_ma3):
         nokta_renk = "🔴 Kırmızı"
     else:
         nokta_renk = "🟡 Sarı"
@@ -146,7 +150,7 @@ def build_bist_hourly(df_15m: pd.DataFrame) -> pd.DataFrame:
 
 def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) oluşturur."""
-    if df_1h.empty or len(df_1h) < 15:
+    if df_1h.empty or len(df_1h) < 10:
         return pd.DataFrame()
     
     df_copy = df_1h.copy()
@@ -169,7 +173,7 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
 
 def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str):
     """Pine Script ECO göstergesini saf mantığıyla hesaplar."""
-    if df.empty or len(df) < 15:
+    if df.empty or len(df) < 10:
         return []
 
     high = df['High'].squeeze()
@@ -293,17 +297,16 @@ def main():
 
     for i, chunk in enumerate(chunks, 1):
         try:
-            # 5 günlük 15m verisi (Çok hızlı indirilir)
-            data_15m = yf.download(chunk, period="5d", interval="15m", group_by="ticker", threads=True, progress=False)
+            # 10 günlük 15m verisi (Tüm barları eksiksiz üretir)
+            data_15m = yf.download(chunk, period="10d", interval="15m", group_by="ticker", threads=True, progress=False)
             data_1d = yf.download(chunk, period="6mo", interval="1d", group_by="ticker", threads=True, progress=False)
 
             for ticker in chunk:
                 try:
-                    # MultiIndex hatasını çözen özel ayıklayıcı
                     clean_15m = extract_ticker_df(data_15m, ticker)
                     if not clean_15m.empty:
                         df_1h = build_bist_hourly(clean_15m)
-                        if not df_1h.empty and len(df_1h) >= 15:
+                        if not df_1h.empty and len(df_1h) >= 10:
                             # 1 Saatlik Tarama
                             for msg in evaluate_eco_bist(df_1h, ticker, "1 Saat (1h)", "1h"):
                                 send_telegram(msg)
@@ -315,13 +318,12 @@ def main():
                                 toplam += 1
 
                     clean_1d = extract_ticker_df(data_1d, ticker)
-                    if not clean_1d.empty and len(clean_1d) >= 15:
-                        # Günlük Tarama
+                    if not clean_1d.empty and len(clean_1d) >= 10:
                         for msg in evaluate_eco_bist(clean_1d, ticker, "Günlük (1D)", "1d"):
                             send_telegram(msg)
                             toplam += 1
 
-                except Exception:
+                except Exception as err:
                     pass
 
         except Exception as e:
