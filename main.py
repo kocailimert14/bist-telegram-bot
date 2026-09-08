@@ -1,5 +1,7 @@
 import os
 import sys
+import time
+import threading
 import numpy as np
 import requests
 import pandas as pd
@@ -13,8 +15,11 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
 
+# Telegram mesaj sınırını aşmamak için kilit (Lock) ve gecikme mekanizması
+telegram_lock = threading.Lock()
+
 def get_all_bist_tickers():
-    """BIST'teki tüm aktif hisseleri dinamik olarak çeker."""
+    """BIST'teki tüm aktif hisseleri dinamik olarak çeker ve geçersizleri ayıklar."""
     url = "https://scanner.tradingview.com/turkey/scan"
     payload = {
         "filter": [{"left": "type", "operation": "equal", "right": "stock"}],
@@ -28,7 +33,11 @@ def get_all_bist_tickers():
     try:
         res = requests.post(url, json=payload, headers=headers, timeout=10)
         data = res.json()
-        tickers = [item["d"][0] + ".IS" for item in data.get("data", []) if "d" in item and len(item["d"]) > 0]
+        # ALTIN gibi emtia veya endeksleri ayıklamak için filtre ekledik
+        tickers = [
+            item["d"][0] + ".IS" for item in data.get("data", []) 
+            if "d" in item and len(item["d"]) > 0 and not item["d"][0].startswith("ALTIN")
+        ]
         if len(tickers) > 50:
             return tickers
     except Exception as e:
@@ -44,21 +53,33 @@ def get_all_bist_tickers():
     ]
 
 def send_telegram(message: str):
-    """Telegram'a HTML formatında bildirim gönderir."""
+    """Telegram'a HTML formatında bildirim gönderir (Flood Korumalı)."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID, 
         "text": message, 
         "parse_mode": "HTML"
     }
-    try:
-        res = requests.post(url, json=payload, timeout=15)
-        if res.status_code == 200:
-            print("Telegram bildirimi iletildi.")
-        else:
-            print(f"Telegram hatası ({res.status_code}): {res.text}")
-    except Exception as e:
-        print(f"Telegram bağlantı hatası: {e}")
+    
+    # Aynı anda birden fazla thread mesaj atmaya çalışırsa sıraya sokar ve yavaşlatır
+    with telegram_lock:
+        try:
+            res = requests.post(url, json=payload, timeout=15)
+            if res.status_code == 200:
+                print("Telegram bildirimi iletildi.")
+            elif res.status_code == 429:
+                retry_after = res.json().get("parameters", {}).get("retry_after", 5)
+                print(f"Telegram 429 Limiti! {retry_after} saniye bekleniyor...")
+                time.sleep(retry_after)
+                # Tekrar deneme
+                requests.post(url, json=payload, timeout=15)
+            else:
+                print(f"Telegram hatası ({res.status_code}): {res.text}")
+            
+            # Telegram global limitine takılmamak için her mesaj arasında min 1.5 sn bekle
+            time.sleep(1.5)
+        except Exception as e:
+            print(f"Telegram bağlantı hatası: {e}")
 
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     """yfinance MultiIndex sütun yapısını ve eksik verileri temizler."""
@@ -70,7 +91,6 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def wwma(series: pd.Series, length: int) -> pd.Series:
-    """Pine Script: wwma(l,p) => (nz(wwma) * (l - 1) + p) / l"""
     vals = series.fillna(0.0).values
     res = np.zeros(len(vals))
     for i in range(len(vals)):
@@ -79,7 +99,6 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
     return pd.Series(res, index=series.index)
 
 def calculate_slingshot(df: pd.DataFrame, idx: int):
-    """Sling Shot System: Düz Kanal Rengi ve Noktasal Trend Rengi hesabı."""
     close = df['Close'].squeeze()
     high = df['High'].squeeze()
     low = df['Low'].squeeze()
@@ -123,22 +142,21 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     return kanal_renk, nokta_renk
 
 def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
-    """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) oluşturur."""
     df = clean_df(df_1h)
     if df.empty or len(df) < 15:
         return pd.DataFrame()
-    
+     
     df_copy = df.copy()
     df_copy['date'] = df_copy.index.date
     df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
-    
+     
     df_4h = df_copy.groupby(['date', 'half']).agg({
         'Open': 'first',
         'High': 'max',
         'Low': 'min',
         'Close': 'last'
     })
-    
+     
     new_idx = []
     for d, h in df_4h.index:
         hour_str = "09:00:00" if h == 1 else "13:00:00"
@@ -147,7 +165,6 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     return df_4h
 
 def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str):
-    """Pine Script ECO göstergesini hesaplar ve SlingShot teyitlerini ekler."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return []
@@ -233,7 +250,6 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
             p_st = float(stoch.iloc[idx - 1])
             time_str = candle_time.strftime('%d.%m.%Y') if tf_key == "1d" else candle_time.strftime('%H:%M')
 
-            # Sling Shot Trend Teyitleri
             kanal_renk, nokta_renk = calculate_slingshot(df, idx)
 
             tag = "🟢 <b>BIST AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>BIST SAT SİNYALİ</b>"
@@ -258,10 +274,8 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
     return signals
 
 def analyze_ticker(symbol: str):
-    """15m, 1h, 4h ve 1d periyotlarını analiz eder."""
     signals = []
     
-    # 1. 15 Dakika
     try:
         df_15m = yf.download(symbol, period="1mo", interval="15m", progress=False)
         s15 = evaluate_eco_bist(df_15m, symbol, "15 Dakika (15m)", "15m")
@@ -269,7 +283,6 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
-    # 2. 1 Saat
     df_1h = None
     try:
         df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
@@ -278,7 +291,6 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
-    # 3. 4 Saat (09:00 - 13:00 ve 13:00 - 18:10 TradingView Uyumlu)
     try:
         if df_1h is not None and not df_1h.empty:
             df_4h = make_bist_4h(df_1h)
@@ -287,7 +299,6 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
-    # 4. Günlük (1D)
     try:
         df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
         s1d = evaluate_eco_bist(df_1d, symbol, "Günlük (1D)", "1d")
@@ -302,7 +313,7 @@ def main():
     print(f"BIST Evan Cabral (ECO) Taraması Başlıyor ({len(tickers)} hisse; 15m, 1h, 4h, 1D)...")
     toplam = 0
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:  # Yükü hafifletmek için worker sayısı 5'e düşürüldü
         futures = {executor.submit(analyze_ticker, ticker): ticker for ticker in tickers}
         for future in as_completed(futures):
             try:
