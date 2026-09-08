@@ -60,14 +60,24 @@ def send_telegram(message: str):
     except Exception as e:
         print(f"Telegram bağlantı hatası: {e}")
 
-def clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    """yfinance MultiIndex sütun yapısını ve eksik verileri temizler."""
-    if df is None or df.empty:
+def extract_ticker_df(batch_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """Toplu yfinance tablosundan tek bir hisseyi hatasız ayıklar."""
+    if batch_df is None or batch_df.empty:
         return pd.DataFrame()
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df = df.dropna(subset=['High', 'Low', 'Close'])
-    return df
+    if not isinstance(batch_df.columns, pd.MultiIndex):
+        return batch_df.dropna(subset=['High', 'Low', 'Close'])
+    
+    # Seviye 0 kontrolü
+    if ticker in batch_df.columns.levels[0]:
+        sub = batch_df[ticker].copy()
+        return sub.dropna(subset=['High', 'Low', 'Close'])
+    
+    # Seviye 1 kontrolü (Güncel yfinance yapısı)
+    if ticker in batch_df.columns.levels:
+        sub = batch_df.xs(ticker, axis=1, level=1).copy()
+        return sub.dropna(subset=['High', 'Low', 'Close'])
+        
+    return pd.DataFrame()
 
 def wwma(series: pd.Series, length: int) -> pd.Series:
     """Pine Script: wwma(l,p) => (nz(wwma) * (l - 1) + p) / l"""
@@ -115,7 +125,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
 
     if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
         nokta_renk = "🟢 Yeşil"
-    elif (v_ma1 < v_ma2) and (v_ma2 < v_lower if False else v_ma2 < v_ma3):
+    elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
         nokta_renk = "🔴 Kırmızı"
     else:
         nokta_renk = "🟡 Sarı"
@@ -232,16 +242,14 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
         if getattr(candle_time, 'tzinfo', None) is not None:
             candle_time = candle_time.tz_convert('+03:00').tz_localize(None)
 
-        # Kapanmış mum (-2) için gerçek periyot süreleri:
+        # Kapanmış mum (-2) için mantıklı periyot penceresi
         if target_idx == -2:
             if tf_key == "1h":
                 close_time = candle_time + pd.Timedelta(hours=1)
-                # 1 saatlik mum kapandıktan sonraki 60 dakika boyunca geçerlidir
                 if (now - close_time).total_seconds() / 60.0 > 60.0:
                     return []
             elif tf_key == "4h":
                 close_time = candle_time + pd.Timedelta(hours=4)
-                # 4 saatlik mum kapandıktan sonraki 240 dakika (4 saat) boyunca geçerlidir
                 if (now - close_time).total_seconds() / 60.0 > 240.0:
                     return []
             elif tf_key == "1d":
@@ -285,17 +293,16 @@ def main():
 
     for i, chunk in enumerate(chunks, 1):
         try:
-            # Sadece son 7 günlük 15m verisi (Çok daha hızlı: 25-30 saniye sürer)
-            data_15m = yf.download(chunk, period="7d", interval="15m", group_by="ticker", threads=True, progress=False)
+            # 5 günlük 15m verisi (Çok hızlı indirilir)
+            data_15m = yf.download(chunk, period="5d", interval="15m", group_by="ticker", threads=True, progress=False)
             data_1d = yf.download(chunk, period="6mo", interval="1d", group_by="ticker", threads=True, progress=False)
 
             for ticker in chunk:
                 try:
-                    raw_15m = data_15m[ticker] if len(chunk) > 1 and ticker in data_15m else data_15m
-                    if raw_15m is not None and not raw_15m.empty:
-                        clean_15m = raw_15m.dropna(subset=['High', 'Low', 'Close'])
+                    # MultiIndex hatasını çözen özel ayıklayıcı
+                    clean_15m = extract_ticker_df(data_15m, ticker)
+                    if not clean_15m.empty:
                         df_1h = build_bist_hourly(clean_15m)
-                        
                         if not df_1h.empty and len(df_1h) >= 15:
                             # 1 Saatlik Tarama
                             for msg in evaluate_eco_bist(df_1h, ticker, "1 Saat (1h)", "1h"):
@@ -307,13 +314,13 @@ def main():
                                 send_telegram(msg)
                                 toplam += 1
 
-                    raw_1d = data_1d[ticker] if len(chunk) > 1 and ticker in data_1d else data_1d
-                    if raw_1d is not None and not raw_1d.empty:
-                        clean_1d = raw_1d.dropna(subset=['High', 'Low', 'Close'])
-                        if len(clean_1d) >= 15:
-                            for msg in evaluate_eco_bist(clean_1d, ticker, "Günlük (1D)", "1d"):
-                                send_telegram(msg)
-                                toplam += 1
+                    clean_1d = extract_ticker_df(data_1d, ticker)
+                    if not clean_1d.empty and len(clean_1d) >= 15:
+                        # Günlük Tarama
+                        for msg in evaluate_eco_bist(clean_1d, ticker, "Günlük (1D)", "1d"):
+                            send_telegram(msg)
+                            toplam += 1
+
                 except Exception:
                     pass
 
