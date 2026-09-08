@@ -23,7 +23,6 @@ COINS = [
     "SANDUSDT", "ZECUSDT", "HYPEUSDT", "GRAMUSDT", "SUSDT"
 ]
 
-# Sadece 15 Dakikalık ve 1 Saatlik Mumlar
 TIMEFRAMES = [
     ("15m", "15 Dakika (15m)"),
     ("1h",  "1 Saat (1h)")
@@ -48,7 +47,7 @@ def send_telegram(message: str):
 
 def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
     """Binance resmi engelsiz sunucusu üzerinden TradingView ile birebir mumları çeker."""
-    url_binance = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=100"
+    url_binance = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
     try:
         res = requests.get(url_binance, timeout=8)
         if res.status_code == 200:
@@ -70,7 +69,7 @@ def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
     # Yedek: Bybit
     interval_map = {"15m": "15", "1h": "60"}
     bb_int = interval_map.get(interval, "60")
-    url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={bb_int}&limit=100"
+    url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={bb_int}&limit=200"
     try:
         res = requests.get(url_bybit, timeout=8)
         if res.status_code == 200:
@@ -98,8 +97,54 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
         res[i] = (prev * (length - 1) + vals[i]) / length
     return pd.Series(res, index=series.index)
 
+def calculate_slingshot(df: pd.DataFrame, idx: int):
+    """Sling Shot System: Düz Kanal Rengi ve Noktasal Trend Rengi hesabı."""
+    close = df['Close'].squeeze()
+    high = df['High'].squeeze()
+    low = df['Low'].squeeze()
+
+    prev_close = close.shift(1)
+    tr1 = high - low
+    tr2 = (high - prev_close).abs()
+    tr3 = (low - prev_close).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    ma1 = close.ewm(span=13, adjust=False).mean()
+    ma2 = close.ewm(span=21, adjust=False).mean()
+    ma3 = close.ewm(span=34, adjust=False).mean()
+
+    ma = close.ewm(span=89, adjust=False).mean()
+    rangema = tr.ewm(span=89, adjust=False).mean()
+
+    upper = ma + rangema * 0.5
+    lower = ma - rangema * 0.5
+
+    v_ma1 = float(ma1.iloc[idx])
+    v_ma2 = float(ma2.iloc[idx])
+    v_ma3 = float(ma3.iloc[idx])
+    v_upper = float(upper.iloc[idx])
+    v_lower = float(lower.iloc[idx])
+
+    # Düz Trend Kanalı Rengi
+    if (v_ma1 > v_upper) and (v_ma2 > v_upper) and (v_ma3 > v_upper):
+        kanal_renk = "🟢 Yeşil"
+    elif (v_ma1 < v_lower) and (v_ma2 < v_lower) and (v_ma3 < v_lower):
+        kanal_renk = "🔴 Kırmızı"
+    else:
+        kanal_renk = "🔵 Mavi"
+
+    # Noktasal Trend Çizgileri Rengi
+    if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
+        nokta_renk = "🟢 Yeşil"
+    elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
+        nokta_renk = "🔴 Kırmızı"
+    else:
+        nokta_renk = "🟡 Sarı"
+
+    return kanal_renk, nokta_renk
+
 def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str):
-    """TradingView Evan Cabral Oscillators (ECO) formülü."""
+    """TradingView Evan Cabral Oscillators (ECO) ve SlingShot teyidi."""
     if df is None or df.empty or len(df) < 20:
         return []
 
@@ -137,14 +182,11 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Pine script kesişim şartları
     cross_up = (stoch.shift(1) < 10) & (stoch > 10)
     cross_down = (stoch.shift(1) > 90) & (stoch < 90)
 
     signals = []
     coin_name = symbol.replace("USDT", "")
-    
-    # Timezone hatasını önleyen sabit TSİ zamanı
     now = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
     candle_duration = pd.Timedelta(minutes=15) if tf_key == "15m" else pd.Timedelta(hours=1)
 
@@ -174,6 +216,9 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
             p_st = float(stoch.iloc[idx - 1])
             time_str = candle_time.strftime('%H:%M')
 
+            # Sling Shot Trend Teyitleri
+            kanal_renk, nokta_renk = calculate_slingshot(df, idx)
+
             tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
             trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
 
@@ -185,7 +230,10 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
                 f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
                 f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n"
                 f"📊 <b>DMI-Stoch:</b> {c_st:.1f} (Önceki: {p_st:.1f})\n"
-                f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}."
+                f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
+                f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
+                f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
+                f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
             )
             signals.append(msg)
             break
