@@ -43,12 +43,18 @@ def send_telegram(message: str):
         print(f"Telegram bağlantı hatası: {e}")
 
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    """yfinance MultiIndex sütun yapısını ve eksik verileri temizler."""
+    """yfinance verisini temizler ve MUTLAKA Türkiye Saatine (TSİ) kilitler."""
     if df is None or df.empty:
         return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df = df.dropna(subset=['High', 'Low', 'Close'])
+    
+    # Saat dilimini Türkiye Saatine (UTC+3) kilitliyoruz
+    if getattr(df.index, 'tz', None) is not None:
+        df.index = df.index.tz_convert('Europe/Istanbul')
+    else:
+        df.index = df.index.tz_localize('UTC').tz_convert('Europe/Istanbul')
     return df
 
 def wwma(series: pd.Series, length: int) -> pd.Series:
@@ -106,11 +112,11 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
 
     return kanal_renk, nokta_renk
 
-def build_bist_hourly(df_15m: pd.DataFrame) -> pd.DataFrame:
+def build_bist_hourly(clean_15m: pd.DataFrame) -> pd.DataFrame:
     """15 dakikalık barları tam saat başlarına (10:00, 11:00...) hizalar."""
-    if df_15m.empty or len(df_15m) < 8:
+    if clean_15m.empty or len(clean_15m) < 8:
         return pd.DataFrame()
-    df_1h = df_15m.resample('1h', closed='left', label='left').agg({
+    df_1h = clean_15m.resample('1h', closed='left', label='left').agg({
         'Open': 'first',
         'High': 'max',
         'Low': 'min',
@@ -118,14 +124,15 @@ def build_bist_hourly(df_15m: pd.DataFrame) -> pd.DataFrame:
     }).dropna()
     return df_1h
 
-def make_bist_4h_from_15m(df_15m: pd.DataFrame) -> pd.DataFrame:
-    """15m verisinden tam 09:00 ve 13:00 başlangıçlı kusursuz 4H barları oluşturur."""
-    if df_15m.empty or len(df_15m) < 16:
+def make_bist_4h_from_15m(clean_15m: pd.DataFrame) -> pd.DataFrame:
+    """15m verisinden tam TSİ 09:00 ve 13:00 başlangıçlı kusursuz 4H barları oluşturur."""
+    if clean_15m.empty or len(clean_15m) < 16:
         return pd.DataFrame()
-    df_copy = df_15m.copy()
+    df_copy = clean_15m.copy()
     df_copy['date'] = df_copy.index.date
+    # TSİ Saatine göre tam 13:00 ayrımı:
     # 1. Mum: 10:00 - 12:45 (hour < 13)
-    # 2. Mum: 13:00 - 18:00 (hour >= 13)
+    # 2. Mum: 13:00 - 18:00 (hour >= 13) -> TUPRS'ın canlı mumu buradadır!
     df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
     df_4h = df_copy.groupby(['date', 'half']).agg({
         'Open': 'first',
@@ -142,8 +149,7 @@ def make_bist_4h_from_15m(df_15m: pd.DataFrame) -> pd.DataFrame:
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     """Pine Script ECO göstergesini saf mantığıyla hesaplar."""
-    df = clean_df(df)
-    if df.empty or len(df) < 10:
+    if df is None or df.empty or len(df) < 10:
         return None
 
     high = df['High'].squeeze()
@@ -257,13 +263,14 @@ def analyze_ticker(symbol: str):
             s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)")
             if s4h:
                 signals.append(s4h)
-    except Exception as e:
+    except Exception:
         pass
 
     # 2. Günlük (1D)
     try:
         df_1d = yf.download(symbol, period="6mo", interval="1d", progress=False)
-        s1d = evaluate_eco(df_1d, symbol, "Günlük (1D)")
+        clean_1d = clean_df(df_1d)
+        s1d = evaluate_eco(clean_1d, symbol, "Günlük (1D)")
         if s1d:
             signals.append(s1d)
     except Exception:
