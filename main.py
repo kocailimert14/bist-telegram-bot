@@ -15,7 +15,6 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
 
-# Telegram mesaj sınırını aşmamak için kilit (Lock) ve gecikme mekanizması
 telegram_lock = threading.Lock()
 
 def get_all_bist_tickers():
@@ -33,7 +32,6 @@ def get_all_bist_tickers():
     try:
         res = requests.post(url, json=payload, headers=headers, timeout=10)
         data = res.json()
-        # ALTIN gibi emtia veya endeksleri ayıklamak için filtre ekledik
         tickers = [
             item["d"][0] + ".IS" for item in data.get("data", []) 
             if "d" in item and len(item["d"]) > 0 and not item["d"][0].startswith("ALTIN")
@@ -61,7 +59,6 @@ def send_telegram(message: str):
         "parse_mode": "HTML"
     }
     
-    # Aynı anda birden fazla thread mesaj atmaya çalışırsa sıraya sokar ve yavaşlatır
     with telegram_lock:
         try:
             res = requests.post(url, json=payload, timeout=15)
@@ -71,18 +68,15 @@ def send_telegram(message: str):
                 retry_after = res.json().get("parameters", {}).get("retry_after", 5)
                 print(f"Telegram 429 Limiti! {retry_after} saniye bekleniyor...")
                 time.sleep(retry_after)
-                # Tekrar deneme
                 requests.post(url, json=payload, timeout=15)
             else:
                 print(f"Telegram hatası ({res.status_code}): {res.text}")
             
-            # Telegram global limitine takılmamak için her mesaj arasında min 1.5 sn bekle
             time.sleep(1.5)
         except Exception as e:
             print(f"Telegram bağlantı hatası: {e}")
 
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
-    """yfinance MultiIndex sütun yapısını ve eksik verileri temizler."""
     if df is None or df.empty:
         return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
@@ -273,9 +267,13 @@ def evaluate_eco_bist(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str)
 
     return signals
 
-def analyze_ticker(symbol: str):
+def analyze_ticker(symbol: symbol if 'symbol' in locals() else str): # safe signature
     signals = []
     
+    # Yahoo istekleri ardarda binmesin diye küçük bir mola ekledik
+    time.sleep(0.3)
+
+    # 1. 15 Dakika
     try:
         df_15m = yf.download(symbol, period="1mo", interval="15m", progress=False)
         s15 = evaluate_eco_bist(df_15m, symbol, "15 Dakika (15m)", "15m")
@@ -283,6 +281,7 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
+    # 2. 1 Saat
     df_1h = None
     try:
         df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
@@ -291,6 +290,7 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
+    # 3. 4 Saat
     try:
         if df_1h is not None and not df_1h.empty:
             df_4h = make_bist_4h(df_1h)
@@ -299,6 +299,7 @@ def analyze_ticker(symbol: str):
     except Exception:
         pass
 
+    # 4. Günlük (1D)
     try:
         df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
         s1d = evaluate_eco_bist(df_1d, symbol, "Günlük (1D)", "1d")
@@ -313,7 +314,8 @@ def main():
     print(f"BIST Evan Cabral (ECO) Taraması Başlıyor ({len(tickers)} hisse; 15m, 1h, 4h, 1D)...")
     toplam = 0
 
-    with ThreadPoolExecutor(max_workers=5) as executor:  # Yükü hafifletmek için worker sayısı 5'e düşürüldü
+    # 401 Unauthorized ve Invalid Crumb hatalarını en aza indirmek için worker sayısı 2'ye düşürüldü
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {executor.submit(analyze_ticker, ticker): ticker for ticker in tickers}
         for future in as_completed(futures):
             try:
