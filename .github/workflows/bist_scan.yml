@@ -1,17 +1,19 @@
 name: BIST Evan Cabral Tarayıcı
 
 on:
-  # İstediğiniz an el ile manuel başlatabilmeniz için buton ekler
   workflow_dispatch:
-
-  # Borsa İstanbul işlem saatleri (Hafta içi TSİ 10:00 - 18:00 arası her 30 dakikada bir çalışır)
   schedule:
-    - cron: '*/30 7-15 * * 1-5'
+    # 1. Saatlik Taramalar: Her saat mum kapanmadan 15 dk önce (10:45 - 17:45 TSİ)
+    # TSİ = UTC + 3 olduğu için 07:45 - 14:45 UTC arası çalışır
+    - cron: '45 7-14 * * 1-5'
+
+    # 2. 4 Saatlik ve Günlük Taramalar: Saat 12:30 ve 17:30 TSİ
+    # TSİ 12:30 = 09:30 UTC, TSİ 17:30 = 14:30 UTC
+    - cron: '30 9,14 * * 1-5'
 
 jobs:
-  tarama:
+  bist_tarama:
     runs-on: ubuntu-latest
-
     steps:
       - name: Depoyu Klonla
         uses: actions/checkout@v4
@@ -21,13 +23,13 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Gerekli Paketleri Yükle
+      - name: Bağımlılıkları Yükle
         run: |
-          pip install yfinance pandas requests
+          python -m pip install --upgrade pip
+          pip install requests pandas numpy yfinance
 
-      - name: BIST Evan Cabral Kodunu Çalıştır
+      - name: BIST Tarama Kodunu Çalıştır
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python main.py
+        run: python main.py
