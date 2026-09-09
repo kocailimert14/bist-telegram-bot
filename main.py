@@ -265,6 +265,7 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     
     df_copy = df.copy()
     df_copy['date'] = df_copy.index.date
+    # TSİ saatine göre 13:00 ayrımı
     df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
     
     df_4h = df_copy.groupby(['date', 'half']).agg({
@@ -347,6 +348,9 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
         else:
             time_str = candle_time.strftime('%d.%m.%Y')
 
+        # TradingView Doğrudan Grafik Linki
+        tv_link = f"https://tr.tradingview.com/chart/?symbol=BIST:{hisse_adi}"
+
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
         sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
         hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, "BUY", kanal_renk, nokta_renk, d_sup, d_res)
@@ -361,7 +365,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
 
         return (
             f"🟢 <b>BIST AL SİNYALİ (Evan Cabral - ECO)</b>\n\n"
-            f"📌 <b>Hisse:</b> #{hisse_adi}\n"
+            f"📌 <b>Hisse:</b> <a href=\"{tv_link}\">#{hisse_adi}</a> <i>(Grafiği Aç)</i>\n"
             f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
             f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
             f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
@@ -395,6 +399,9 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
         else:
             time_str = candle_time.strftime('%d.%m.%Y')
 
+        # TradingView Doğrudan Grafik Linki
+        tv_link = f"https://tr.tradingview.com/chart/?symbol=BIST:{hisse_adi}"
+
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
         sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
         hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, "SELL", kanal_renk, nokta_renk, d_sup, d_res)
@@ -409,7 +416,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
 
         return (
             f"🔴 <b>BIST SAT SİNYALİ (Evan Cabral - ECO)</b>\n\n"
-            f"📌 <b>Hisse:</b> #{hisse_adi}\n"
+            f"📌 <b>Hisse:</b> <a href=\"{tv_link}\">#{hisse_adi}</a> <i>(Grafiği Aç)</i>\n"
             f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
             f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
             f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
