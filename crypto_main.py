@@ -49,7 +49,7 @@ def send_telegram(message: str) -> bool:
         return False
 
 def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
-    """Binance resmi engelsiz sunucusu üzerinden TradingView ile birebir mumları çeker."""
+    """Binance resmi engelsiz sunucusu üzerinden kline çeker."""
     url_binance = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
     try:
         res = requests.get(url_binance, timeout=8)
@@ -70,8 +70,7 @@ def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
     except Exception:
         pass
 
-    # Yedek: Bybit
-    interval_map = {"15m": "15", "1h": "60"}
+    interval_map = {"15m": "15", "1h": "60", "4h": "240"}
     bb_int = interval_map.get(interval, "60")
     url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={bb_int}&limit=200"
     try:
@@ -102,8 +101,10 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
         res[i] = (prev * (length - 1) + vals[i]) / length
     return pd.Series(res, index=series.index)
 
-def calculate_slingshot(df: pd.DataFrame, idx: int):
+def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
     """Sling Shot System: Düz Kanal Rengi ve Noktasal Trend Rengi hesabı."""
+    if df is None or len(df) < 15:
+        return "Belirsiz", "Belirsiz"
     try:
         close = df['Close'].squeeze()
         high = df['High'].squeeze()
@@ -198,7 +199,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
     except Exception:
         return None, None, 0.0, 0.0
 
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, kanal_renk: str, nokta_renk: str, d_sup: float, d_res: float):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float):
     """Göreceli Hacim (RVol) ve 1-5 Yıldız Sinyal Güven Puanı hesabı."""
     try:
         vol = df['Volume'].squeeze()
@@ -221,9 +222,11 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, kanal_re
             hacim_metni = f"⚠️ Zayıf (Ortalamanın {rvol:.1f}x Katı)"
 
         puan = 1
-        if (sig_type == "BUY" and "Yeşil" in kanal_renk) or (sig_type == "SELL" and "Kırmızı" in kanal_renk):
+        k1h, _ = ss_multi.get("1h", ("", ""))
+        k15, _ = ss_multi.get("15m", ("", ""))
+        if (sig_type == "BUY" and "Yeşil" in k1h) or (sig_type == "SELL" and "Kırmızı" in k1h):
             puan += 1
-        if (sig_type == "BUY" and "Yeşil" in nokta_renk) or (sig_type == "SELL" and "Kırmızı" in nokta_renk):
+        if (sig_type == "BUY" and "Yeşil" in k15) or (sig_type == "SELL" and "Kırmızı" in k15):
             puan += 1
         if rvol >= 1.1:
             puan += 1
@@ -238,8 +241,8 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, kanal_re
     except Exception:
         return "⚪ Normal", "⭐⭐⭐ (3/5)"
 
-def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str):
-    """TradingView Evan Cabral Oscillators (ECO), SlingShot, Kuvvetli Destek-Direnç ve Puanlama."""
+def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
+    """TradingView Evan Cabral Oscillators: SADECE o an açık olan canlı mumdaki kesişim."""
     if df is None or df.empty or len(df) < 20:
         return None
 
@@ -277,101 +280,88 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    cross_up = (stoch.shift(1) < 10) & (stoch > 10)
-    cross_down = (stoch.shift(1) > 90) & (stoch < 90)
+    # SADECE VE SADECE O AN AÇIK OLAN CANLI MUM KONTROL EDİLİR
+    c_prev = float(stoch.iloc[-2]) # Stoch[1]
+    c_curr = float(stoch.iloc[-1]) # Stoch (Canlı Mum)
 
-    target_idx = None
     sig_type = None
-    durum_metni = ""
+    if c_prev < 10 and c_curr > 10:
+        sig_type = "BUY"
+    elif c_prev > 90 and c_curr < 90:
+        sig_type = "SELL"
+    else:
+        return None
 
-    # KURAL 1: 15 Dakikalıkta SADECE o an açık olan canlı mum kontrol edilir (iloc[-1])
-    if tf_key == "15m":
-        if cross_up.iloc[-1]:
-            target_idx = -1
-            sig_type = "BUY"
-            durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
-        elif cross_down.iloc[-1]:
-            target_idx = -1
-            sig_type = "SELL"
-            durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
+    target_idx = -1
+    candle_time = df.index[target_idx]
+    candle_price = float(close.iloc[target_idx])
+    time_str = candle_time.strftime('%H:%M')
+    coin_name = symbol.replace("USDT", "")
+    tv_link = f"https://tr.tradingview.com/chart/?symbol=BINANCE:{symbol}"
 
-    # KURAL 2: 1 Saatlikte HEM canlı mum (iloc[-1]) HEM bir önceki mum (iloc[-2]) kontrol edilir
-    elif tf_key == "1h":
-        if cross_up.iloc[-1]:
-            target_idx = -1
-            sig_type = "BUY"
-            durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
-        elif cross_down.iloc[-1]:
-            target_idx = -1
-            sig_type = "SELL"
-            durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
-        elif cross_up.iloc[-2]:
-            target_idx = -2
-            sig_type = "BUY"
-            durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
-        elif cross_down.iloc[-2]:
-            target_idx = -2
-            sig_type = "SELL"
-            durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
+    sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res)
 
-    if sig_type is not None:
-        candle_time = df.index[target_idx]
-        candle_price = float(close.iloc[target_idx])
-        time_str = candle_time.strftime('%H:%M')
-        coin_name = symbol.replace("USDT", "")
-        
-        # TradingView Doğrudan Grafik Linki
-        tv_link = f"https://tr.tradingview.com/chart/?symbol=BINANCE:{symbol}"
+    ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
+    ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
+    ss_4h_k, ss_4h_n = ss_multi.get("4h", ("Belirsiz", "Belirsiz"))
 
-        kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
-        sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-        hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, kanal_renk, nokta_renk, d_sup, d_res)
-
-        sr_metni = ""
-        if sup is not None and res is not None:
-            sr_metni = (
-                f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
-                f"▫️ <b>Ana Destek:</b> ${sup:,.4f} (<code>{d_sup:+.1f}%</code>)\n"
-                f"▫️ <b>Ana Direnç:</b> ${res:,.4f} (<code>{d_res:+.1f}%</code>)"
-            )
-
-        tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
-        trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
-
-        return (
-            f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
-            f"🪙 <b>Koin:</b> <a href=\"{tv_link}\">#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
-            f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
-            f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-            f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
-            f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n"
-            f"📊 <b>DMI-Stoch:</b> {stoch.iloc[target_idx]:.1f} (Önceki: {stoch.iloc[target_idx-1]:.1f})\n"
-            f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
-            f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
-            f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
-            f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
-            f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
-            f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
-            f"{sr_metni}"
+    sr_metni = ""
+    if sup is not None and res is not None:
+        sr_metni = (
+            f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
+            f"▫️ <b>Ana Destek:</b> ${sup:,.4f} (<code>{d_sup:+.1f}%</code>)\n"
+            f"▫️ <b>Ana Direnç:</b> ${res:,.4f} (<code>{d_res:+.1f}%</code>)"
         )
 
-    return None
+    tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
+    trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
+
+    return (
+        f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
+        f"🪙 <b>Koin:</b> <a href=\"{tv_link}\">#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
+        f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
+        f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
+        f"⚡ <b>Mum Durumu:</b> ⚠️ CANLI MUM (Anlık Sinyal)\n"
+        f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n"
+        f"📊 <b>DMI-Stoch:</b> {c_curr:.1f} (Önceki: {c_prev:.1f})\n"
+        f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
+        f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
+        f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
+        f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
+        f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
+        f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
+        f"▫️ <b>4 Saat (4h):</b> {ss_4h_k} Kanal | {ss_4h_n} Nokta"
+        f"{sr_metni}"
+    )
 
 def scan_single_coin(symbol: str, scan_15m: bool, scan_1h: bool):
-    """Sadece planlanan saatteki ilgili periyotları analiz eder."""
+    """Tek bir koin için 15m, 1h ve 4h SlingShot teyitlerini hesaplayıp tarar."""
     found_signals = []
     try:
-        if scan_15m:
-            df_15m = get_binance_klines(symbol, "15m")
-            s15 = evaluate_eco_crypto(df_15m, symbol, "15 Dakika (15m)", "15m")
+        # Multi-Timeframe SlingShot için verileri çek
+        df_15m = get_binance_klines(symbol, "15m")
+        df_1h = get_binance_klines(symbol, "1h")
+        df_4h = get_binance_klines(symbol, "4h")
+
+        ss_multi = {
+            "15m": calculate_slingshot(df_15m, -1),
+            "1h": calculate_slingshot(df_1h, -1),
+            "4h": calculate_slingshot(df_4h, -1)
+        }
+
+        # 1. 15 Dakikalık Canlı Mum
+        if scan_15m and df_15m is not None and not df_15m.empty:
+            s15 = evaluate_eco_crypto(df_15m, symbol, "15 Dakika (15m)", ss_multi)
             if s15:
                 found_signals.append(s15)
 
-        if scan_1h:
-            df_1h = get_binance_klines(symbol, "1h")
-            s1h = evaluate_eco_crypto(df_1h, symbol, "1 Saat (1h)", "1h")
+        # 2. 1 Saatlik Canlı Mum
+        if scan_1h and df_1h is not None and not df_1h.empty:
+            s1h = evaluate_eco_crypto(df_1h, symbol, "1 Saat (1h)", ss_multi)
             if s1h:
                 found_signals.append(s1h)
+
     except Exception as e:
         print(f"{symbol} analiz hatası: {e}")
     return found_signals
@@ -390,7 +380,7 @@ def determine_crypto_modes(now_tsi):
     return scan_15m, scan_1h
 
 def main():
-    now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
+    now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
     scan_15m, scan_1h = determine_crypto_modes(now_tsi)
     
     if not scan_15m and not scan_1h:
@@ -398,8 +388,8 @@ def main():
         return
 
     modlar = []
-    if scan_15m: modlar.append("15 Dakika (Canlı Mum)")
-    if scan_1h: modlar.append("1 Saat (Canlı + Önceki Mum)")
+    if scan_15m: modlar.append("15m Canlı Mum")
+    if scan_1h: modlar.append("1h Canlı Mum")
 
     print(f"Kripto Taraması Başlıyor (Saat: {now_tsi.strftime('%H:%M')} TSİ) -> Aktif Modlar: {', '.join(modlar)} ({len(COINS)} Koin)...")
     all_signals = []
@@ -422,7 +412,7 @@ def main():
         if i < len(all_signals) - 1:
             time.sleep(1.5)
 
-    print(f"Kripto Taraması bitti! Üretilen yeni sinyal sayısı: {toplam}")
+    print(f"Kripto Taraması bitti! Bulunan toplam sinyal: {toplam}")
 
 if __name__ == "__main__":
     main()
