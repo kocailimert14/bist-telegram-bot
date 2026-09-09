@@ -168,25 +168,48 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     except Exception:
         return "Belirsiz", "Belirsiz"
 
-def calculate_support_resistance(df: pd.DataFrame, idx: int = -1):
-    """Otomatik Swing Destek & Direnç Seviyeleri ve Yüzdesel Mesafeleri."""
+def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min_dist_pct: float = 0.6):
+    """Kuvvetli Majör Destek & Direnç Seviyeleri (Mikro %0.1 gürültüleri eler)."""
     try:
         close = df['Close'].squeeze()
         high = df['High'].squeeze()
         low = df['Low'].squeeze()
         
         curr_price = float(close.iloc[idx])
-        window = min(30, len(df))
+        window = min(lookback, len(df))
         
-        sub_high = high.iloc[-window:]
-        sub_low = low.iloc[-window:]
+        sub_high = high.iloc[-window:].values
+        sub_low = low.iloc[-window:].values
         
-        higher_highs = sub_high[sub_high > curr_price]
-        resistance = float(higher_highs.min()) if not higher_highs.empty else float(sub_high.max())
+        res_peaks = []
+        sup_troughs = []
         
-        lower_lows = sub_low[sub_low < curr_price]
-        support = float(lower_lows.max()) if not lower_lows.empty else float(sub_low.min())
-        
+        k = 3
+        for i in range(k, len(sub_high) - k):
+            if all(sub_high[i] >= sub_high[i-j] for j in range(1, k+1)) and all(sub_high[i] >= sub_high[i+j] for j in range(1, k+1)):
+                dist = ((sub_high[i] - curr_price) / curr_price) * 100
+                if dist >= min_dist_pct:
+                    res_peaks.append(sub_high[i])
+                    
+            if all(sub_low[i] <= sub_low[i-j] for j in range(1, k+1)) and all(sub_low[i] <= sub_low[i+j] for j in range(1, k+1)):
+                dist = ((curr_price - sub_low[i]) / curr_price) * 100
+                if dist >= min_dist_pct:
+                    sup_troughs.append(sub_low[i])
+
+        if res_peaks:
+            resistance = float(min(res_peaks))
+        else:
+            resistance = float(np.max(sub_high))
+            if ((resistance - curr_price) / curr_price) * 100 < min_dist_pct:
+                resistance = curr_price * (1 + min_dist_pct / 100)
+
+        if sup_troughs:
+            support = float(max(sup_troughs))
+        else:
+            support = float(np.min(sub_low))
+            if ((curr_price - support) / curr_price) * 100 < min_dist_pct:
+                support = curr_price * (1 - min_dist_pct / 100)
+
         dist_sup = ((support - curr_price) / curr_price) * 100
         dist_res = ((resistance - curr_price) / curr_price) * 100
         
@@ -242,7 +265,6 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     
     df_copy = df.copy()
     df_copy['date'] = df_copy.index.date
-    # TSİ saatine göre 13:00 ayrımı
     df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
     
     df_4h = df_copy.groupby(['date', 'half']).agg({
@@ -326,15 +348,15 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             time_str = candle_time.strftime('%d.%m.%Y')
 
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
-        sup, res, d_sup, d_res = calculate_support_resistance(df, target_idx)
+        sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
         hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, "BUY", kanal_renk, nokta_renk, d_sup, d_res)
 
         sr_metni = ""
         if sup is not None and res is not None:
             sr_metni = (
-                f"\n\n<b>🎯 Destek & Direnç Seviyeleri:</b>\n"
-                f"▫️ <b>En Yakın Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
-                f"▫️ <b>En Yakın Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
+                f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
+                f"▫️ <b>Ana Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
+                f"▫️ <b>Ana Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
             )
 
         return (
@@ -374,15 +396,15 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             time_str = candle_time.strftime('%d.%m.%Y')
 
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
-        sup, res, d_sup, d_res = calculate_support_resistance(df, target_idx)
+        sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
         hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, "SELL", kanal_renk, nokta_renk, d_sup, d_res)
 
         sr_metni = ""
         if sup is not None and res is not None:
             sr_metni = (
-                f"\n\n<b>🎯 Destek & Direnç Seviyeleri:</b>\n"
-                f"▫️ <b>En Yakın Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
-                f"▫️ <b>En Yakın Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
+                f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
+                f"▫️ <b>Ana Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
+                f"▫️ <b>Ana Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
             )
 
         return (
