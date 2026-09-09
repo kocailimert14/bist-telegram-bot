@@ -284,7 +284,7 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     return df_4h
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
-    """TradingView Pine Script ECO kuralıyla birebir aynı: SADECE o anki mumdaki kesişimi yakalar."""
+    """TradingView Pine Script ECO kuralıyla birebir aynı: SADECE taze canlı mumu değerlendirir."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -323,11 +323,10 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # TradingView Pine Script formülü:
-    # crossUp = Stoch[1] < 10 and Stoch > 10
-    # crossDown = Stoch[1] > 90 and Stoch < 90
+    # Pine Script: crossUp = Stoch[1] < 10 and Stoch > 10
+    # Pine Script: crossDown = Stoch[1] > 90 and Stoch < 90
     c_prev = float(stoch.iloc[-2]) # Stoch[1]
-    c_curr = float(stoch.iloc[-1]) # Stoch (Canlı Mum)
+    c_curr = float(stoch.iloc[-1]) # Stoch (Son Mum)
 
     sig_type = None
     if c_prev < 10 and c_curr > 10:
@@ -335,13 +334,29 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     elif c_prev > 90 and c_curr < 90:
         sig_type = "SELL"
     else:
-        # Kesişim bu mumda değilse kesinlikle sinyal verme!
         return None
 
     target_idx = -1
-    durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
     candle_time = df.index[target_idx]
+
+    # ZAMAN VE TAZELİK KONTROLÜ (Bayat Veri Koruması - KRDMB gibi saatler öncesinde kalmış mumları eler)
+    now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
+    if candle_time.date() != now_tsi.date():
+        return None # Bugünün tarihi değilse çöpe at
+
+    # 1 Saatlik grafik için: Mum yaşı en fazla 75 dakika olabilir! (Örn: 17:45 taramasında 13:00'te kalmış hisseler elenir!)
+    if tf_label == "1 Saat (1h)":
+        age_minutes = (now_tsi - candle_time).total_seconds() / 60.0
+        if age_minutes > 75:
+            return None
+
+    # 4 Saatlik grafik için: Saat 17:30 taramasında sabahki 09:00 mumu gönderilemez, mutlaka 13:00 mumu olmalı!
+    if tf_label == "4 Saat (4h)":
+        if now_tsi.hour >= 16 and candle_time.hour < 13:
+            return None
+
     candle_price = float(close.iloc[target_idx])
+    durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
 
     if "Saat" in tf_label:
         time_str = candle_time.strftime('%H:00')
@@ -441,7 +456,6 @@ def determine_scan_modes(now_tsi):
     scan_1d = (h == 17 and 15 <= m <= 35)
 
     # 3. Saatlik Tarama: 12:30 ve 17:30 DIŞINDAKİ tüm seans taramalarında SADECE 1 Saatlik çalışır!
-    # Saat 16:00, 16:45 veya başka bir saatte çalışsa bile 4h ve 1d KESİNLİKLE FALSE kalır!
     scan_1h = not (scan_4h or scan_1d)
 
     return scan_1h, scan_4h, scan_1d
