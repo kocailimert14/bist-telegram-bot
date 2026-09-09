@@ -159,7 +159,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
 
         if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
             nokta_renk = "🟢 Yeşil"
-        elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
+        elif (v_ma1 < v_lower if False else v_ma2 < v_ma3):
             nokta_renk = "🔴 Kırmızı"
         else:
             nokta_renk = "🟡 Sarı"
@@ -167,102 +167,6 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
         return kanal_renk, nokta_renk
     except Exception:
         return "Belirsiz", "Belirsiz"
-
-def calculate_smc(df: pd.DataFrame, idx: int = -1):
-    """LuxAlgo Smart Money Concepts (SMC): Trend, Bölge, Yapı Kırılımı ve Order Block."""
-    if df is None or len(df) < 30:
-        return "Belirsiz", "Belirsiz", "Belirsiz", "Belirsiz"
-
-    high = df['High'].values
-    low = df['Low'].values
-    close = df['Close'].values
-    n = len(df)
-    
-    p_len = 5
-    trend = 0
-    last_structure = "▫️ Yapı Korunuyor"
-    
-    swing_high = high[0]
-    swing_low = low[0]
-    swing_high_crossed = False
-    swing_low_crossed = False
-    
-    bullish_obs = []
-    bearish_obs = []
-    
-    for i in range(p_len, n):
-        is_p_high = True
-        is_p_low = True
-        cand_high = high[i - p_len]
-        cand_low = low[i - p_len]
-        
-        for k in range(i - 2 * p_len, i + 1):
-            if k < 0 or k >= n or k == (i - p_len):
-                continue
-            if high[k] >= cand_high:
-                is_p_high = False
-            if low[k] <= cand_low:
-                is_p_low = False
-                
-        if is_p_high:
-            swing_high = cand_high
-            swing_high_crossed = False
-            start_k = max(0, i - 2 * p_len)
-            highest_k = start_k + np.argmax(high[start_k:i])
-            bearish_obs.append((low[highest_k], high[highest_k]))
-            if len(bearish_obs) > 5:
-                bearish_obs.pop(0)
-
-        if is_p_low:
-            swing_low = cand_low
-            swing_low_crossed = False
-            start_k = max(0, i - 2 * p_len)
-            lowest_k = start_k + np.argmin(low[start_k:i])
-            bullish_obs.append((low[lowest_k], high[lowest_k]))
-            if len(bullish_obs) > 5:
-                bullish_obs.pop(0)
-
-        c_price = close[i]
-        if c_price > swing_high and not swing_high_crossed:
-            swing_high_crossed = True
-            last_structure = "⚡ CHoCH (Boğa Dönüşü)" if trend == -1 else "⚡ BOS (Boğa Devamı)"
-            trend = 1
-        elif c_price < swing_low and not swing_low_crossed:
-            swing_low_crossed = True
-            last_structure = "⚡ CHoCH (Ayı Dönüşü)" if trend == 1 else "⚡ BOS (Ayı Devamı)"
-            trend = -1
-
-    smc_trend = "🟢 Boğa (Bullish)" if trend == 1 else "🔴 Ayı (Bearish)" if trend == -1 else "⚪ Nötr"
-
-    curr_price = float(close[idx])
-    recent_high = np.max(high[-40:])
-    recent_low = np.min(low[-40:])
-    rng = recent_high - recent_low
-    
-    if rng > 0:
-        percent = (curr_price - recent_low) / rng
-        if percent >= 0.525:
-            smc_zone = "🔴 Premium (Pahalı / Satış Bölgesi)"
-        elif percent <= 0.475:
-            smc_zone = "🟢 Discount (Ucuz / Alım Bölgesi)"
-        else:
-            smc_zone = "⚪ Denge (Equilibrium)"
-    else:
-        smc_zone = "⚪ Denge"
-
-    smc_ob = "⚪ Blok Dışı"
-    for ob_low, ob_high in reversed(bullish_obs):
-        if ob_low <= curr_price <= ob_high:
-            smc_ob = "🟢 Alım Bloğunda (Talep)"
-            break
-            
-    if smc_ob == "⚪ Blok Dışı":
-        for ob_low, ob_high in reversed(bearish_obs):
-            if ob_low <= curr_price <= ob_high:
-                smc_ob = "🔴 Satış Bloğunda (Arz)"
-                break
-
-    return smc_trend, smc_zone, last_structure, smc_ob
 
 def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) oluşturur."""
@@ -272,6 +176,7 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     
     df_copy = df.copy()
     df_copy['date'] = df_copy.index.date
+    # TSİ saatine göre 13:00 ayrımı
     df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
     
     df_4h = df_copy.groupby(['date', 'half']).agg({
@@ -289,7 +194,7 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     return df_4h
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
-    """Pine Script ECO göstergesini saf mantığıyla hesaplar ve SMC teyitlerini ekler."""
+    """Pine Script ECO göstergesini saf mantığıyla hesaplar."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -355,7 +260,6 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             time_str = candle_time.strftime('%d.%m.%Y')
 
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
-        smc_trend, smc_zone, smc_struct, smc_ob = calculate_smc(df, target_idx)
 
         return (
             f"🟢 <b>BIST AL SİNYALİ (Evan Cabral - ECO)</b>\n\n"
@@ -368,12 +272,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             f"🎯 <b>Tetikleyici:</b> DMI-Stoch 10 seviyesini yukarı kesti ('B')\n\n"
             f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
             f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
-            f"▫️ <b>Noktasal Trend:</b> {nokta_renk}\n\n"
-            f"<b>🏛 Akıllı Para Konsepti (SMC):</b>\n"
-            f"▫️ <b>Kurumsal Trend:</b> {smc_trend}\n"
-            f"▫️ <b>Fiyat Bölgesi:</b> {smc_zone}\n"
-            f"▫️ <b>Yapı Kırılımı:</b> {smc_struct}\n"
-            f"▫️ <b>Order Block:</b> {smc_ob}"
+            f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
         )
 
     # 2. SAT SİNYALİ KONTROLÜ
@@ -396,7 +295,6 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             time_str = candle_time.strftime('%d.%m.%Y')
 
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
-        smc_trend, smc_zone, smc_struct, smc_ob = calculate_smc(df, target_idx)
 
         return (
             f"🔴 <b>BIST SAT SİNYALİ (Evan Cabral - ECO)</b>\n\n"
@@ -409,57 +307,95 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             f"🎯 <b>Tetikleyici:</b> DMI-Stoch 90 seviyesini aşağı kesti ('S')\n\n"
             f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
             f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
-            f"▫️ <b>Noktasal Trend:</b> {nokta_renk}\n\n"
-            f"<b>🏛 Akıllı Para Konsepti (SMC):</b>\n"
-            f"▫️ <b>Kurumsal Trend:</b> {smc_trend}\n"
-            f"▫️ <b>Fiyat Bölgesi:</b> {smc_zone}\n"
-            f"▫️ <b>Yapı Kırılımı:</b> {smc_struct}\n"
-            f"▫️ <b>Order Block:</b> {smc_ob}"
+            f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
         )
 
     return None
 
-def analyze_ticker(symbol: str):
-    """Her hisseyi doğrudan 1h, 4h ve 1d periyotlarında analiz eder."""
+def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
+    """Sadece planlanan saatteki ilgili periyotları analiz eder."""
     signals = []
-    
-    # 1. 1 Saatlik
     df_1h = None
-    try:
-        df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
-        s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
-        if s1h:
-            signals.append(s1h)
-    except Exception:
-        pass
+    
+    # 1 Saatlik veya 4 Saatlik gerekiyorsa 1h verisini indir
+    if scan_1h or scan_4h:
+        try:
+            df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
+        except Exception:
+            pass
 
-    # 2. 4 Saatlik
-    try:
-        if df_1h is not None and not df_1h.empty:
+    # 1. 1 Saatlik Tarama
+    if scan_1h and df_1h is not None and not df_1h.empty:
+        try:
+            s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
+            if s1h:
+                signals.append(s1h)
+        except Exception:
+            pass
+
+    # 2. 4 Saatlik Tarama (12:30 ve 17:30)
+    if scan_4h and df_1h is not None and not df_1h.empty:
+        try:
             df_4h = make_bist_4h(df_1h)
             s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)")
             if s4h:
                 signals.append(s4h)
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    # 3. Günlük (1D)
-    try:
-        df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
-        s1d = evaluate_eco(df_1d, symbol, "Günlük (1D)")
-        if s1d:
-            signals.append(s1d)
-    except Exception:
-        pass
+    # 3. Günlük (1D) Tarama (17:30)
+    if scan_1d:
+        try:
+            df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
+            s1d = evaluate_eco(df_1d, symbol, "Günlük (1D)")
+            if s1d:
+                signals.append(s1d)
+        except Exception:
+            pass
 
     return signals
 
+def determine_scan_modes(now_tsi):
+    """Hangi periyodun taranacağını saate göre belirler."""
+    h = now_tsi.hour
+    m = now_tsi.minute
+    
+    scan_1h = False
+    scan_4h = False
+    scan_1d = False
+    
+    # 1. Saatlik Tarama: Her saat mum kapanmadan 15 dk önce (10:45, 11:45... 17:45 TSİ)
+    if 10 <= h <= 17 and 40 <= m <= 55:
+        scan_1h = True
+        
+    # 2. 4 Saatlik Tarama: 12:30 ve 17:30 TSİ
+    if (h == 12 or h == 17) and 20 <= m <= 35:
+        scan_4h = True
+        
+    # 3. Günlük Tarama: Saat 17:30 TSİ
+    if h == 17 and 20 <= m <= 35:
+        scan_1d = True
+        
+    # Eğer bu saatlerin dışında manuel çalıştırılmışsa hepsini test amaçlı tara:
+    if not scan_1h and not scan_4h and not scan_1d:
+        scan_1h, scan_4h, scan_1d = True, True, True
+
+    return scan_1h, scan_4h, scan_1d
+
 def main():
-    print(f"BIST Taraması Başlıyor ({len(BIST_TICKERS)} hisse; 1h, 4h, 1D)...")
+    now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
+    scan_1h, scan_4h, scan_1d = determine_scan_modes(now_tsi)
+    
+    aktif_modlar = []
+    if scan_1h: aktif_modlar.append("1 Saatlik")
+    if scan_4h: aktif_modlar.append("4 Saatlik")
+    if scan_1d: aktif_modlar.append("Günlük")
+    
+    print(f"BIST Taraması Başlıyor (Saat: {now_tsi.strftime('%H:%M')} TSİ) -> Aktif Modlar: {', '.join(aktif_modlar)} ({len(BIST_TICKERS)} Hisse)...")
     all_signals = []
 
     with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(analyze_ticker, ticker): ticker for ticker in BIST_TICKERS}
+        futures = {executor.submit(analyze_ticker, ticker, scan_1h, scan_4h, scan_1d): ticker for ticker in BIST_TICKERS}
         for future in as_completed(futures):
             try:
                 results = future.result()
