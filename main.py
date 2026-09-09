@@ -453,7 +453,7 @@ def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
         except Exception:
             pass
 
-    # 2. 4 Saatlik Tarama (12:30 ve 17:30)
+    # 2. 4 Saatlik Tarama (SADECE 12:30 ve 17:30)
     if scan_4h and df_1h is not None and not df_1h.empty:
         try:
             df_4h = make_bist_4h(df_1h)
@@ -463,7 +463,7 @@ def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
         except Exception:
             pass
 
-    # 3. Günlük (1D) Tarama (17:30)
+    # 3. Günlük (1D) Tarama (SADECE 17:30)
     if scan_1d:
         try:
             df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
@@ -476,29 +476,23 @@ def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
     return signals
 
 def determine_scan_modes(now_tsi):
-    """Hangi periyodun taranacağını saate göre belirler."""
+    """Hangi periyodun taranacağını saate göre KESİN OLARAK belirler."""
     h = now_tsi.hour
     m = now_tsi.minute
     
-    scan_1h = False
-    scan_4h = False
-    scan_1d = False
-    
-    # 1. Saatlik Tarama: Her saat mum kapanmadan 15 dk önce (10:45, 11:45... 17:45 TSİ)
-    if 10 <= h <= 17 and 40 <= m <= 55:
-        scan_1h = True
-        
-    # 2. 4 Saatlik Tarama: 12:30 ve 17:30 TSİ
-    if (h == 12 or h == 17) and 20 <= m <= 35:
-        scan_4h = True
-        
-    # 3. Günlük Tarama: Saat 17:30 TSİ
-    if h == 17 and 20 <= m <= 35:
-        scan_1d = True
-        
-    # Manuel test çalıştırmalarında hepsi aktif
-    if not scan_1h and not scan_4h and not scan_1d:
-        scan_1h, scan_4h, scan_1d = True, True, True
+    # Seans dışı (18:15 sonrası veya 09:30 öncesi) kesinlikle çalışmaz
+    if h >= 19 or h < 9 or (h == 9 and m < 45):
+        return False, False, False
+
+    # 1. 4 Saatlik Tarama: SADECE saat 12:30 ve 17:30 civarında (dakika 15 ile 35 arası)
+    scan_4h = (h == 12 and 15 <= m <= 35) or (h == 17 and 15 <= m <= 35)
+
+    # 2. Günlük Tarama: SADECE saat 17:30 civarında (dakika 15 ile 35 arası)
+    scan_1d = (h == 17 and 15 <= m <= 35)
+
+    # 3. Saatlik Tarama: 12:30 ve 17:30 DIŞINDAKİ tüm seans taramalarında SADECE 1 Saatlik çalışır!
+    # Saat 16:00, 16:45 veya başka bir saatte çalışsa bile 4h ve 1d KESİNLİKLE FALSE kalır!
+    scan_1h = not (scan_4h or scan_1d)
 
     return scan_1h, scan_4h, scan_1d
 
@@ -506,6 +500,11 @@ def main():
     now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
     scan_1h, scan_4h, scan_1d = determine_scan_modes(now_tsi)
     
+    # Eğer seans dışıysa hiçbir şey yapmadan anında kapanır
+    if not scan_1h and not scan_4h and not scan_1d:
+        print(f"Seans dışı saat ({now_tsi.strftime('%H:%M')} TSİ). Tarama yapılmıyor.")
+        return
+
     aktif_modlar = []
     if scan_1h: aktif_modlar.append("1 Saatlik")
     if scan_4h: aktif_modlar.append("4 Saatlik")
