@@ -147,8 +147,36 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     except Exception:
         return "Belirsiz", "Belirsiz"
 
+def calculate_support_resistance(df: pd.DataFrame, idx: int = -1):
+    """Otomatik Swing Destek & Direnç Seviyeleri ve Yüzdesel Mesafeleri."""
+    try:
+        close = df['Close'].squeeze()
+        high = df['High'].squeeze()
+        low = df['Low'].squeeze()
+        
+        curr_price = float(close.iloc[idx])
+        window = min(30, len(df))
+        
+        sub_high = high.iloc[-window:]
+        sub_low = low.iloc[-window:]
+        
+        # Fiyatın üzerindeki en yakın tepe (Direnç)
+        higher_highs = sub_high[sub_high > curr_price]
+        resistance = float(higher_highs.min()) if not higher_highs.empty else float(sub_high.max())
+        
+        # Fiyatın altındaki en yakın dip (Destek)
+        lower_lows = sub_low[sub_low < curr_price]
+        support = float(lower_lows.max()) if not lower_lows.empty else float(sub_low.min())
+        
+        dist_sup = ((support - curr_price) / curr_price) * 100
+        dist_res = ((resistance - curr_price) / curr_price) * 100
+        
+        return support, resistance, dist_sup, dist_res
+    except Exception:
+        return None, None, 0.0, 0.0
+
 def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: str):
-    """TradingView Evan Cabral Oscillators (ECO) ve SlingShot teyidi."""
+    """TradingView Evan Cabral Oscillators (ECO), SlingShot ve Destek-Direnç hesabı."""
     if df is None or df.empty or len(df) < 20:
         return None
 
@@ -228,7 +256,17 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
         candle_price = float(close.iloc[target_idx])
         time_str = candle_time.strftime('%H:%M')
         coin_name = symbol.replace("USDT", "")
+        
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
+        sup, res, d_sup, d_res = calculate_support_resistance(df, target_idx)
+
+        sr_metni = ""
+        if sup is not None and res is not None:
+            sr_metni = (
+                f"\n\n<b>🎯 Destek & Direnç Seviyeleri:</b>\n"
+                f"▫️ <b>En Yakın Destek:</b> ${sup:,.4f} (<code>{d_sup:+.1f}%</code>)\n"
+                f"▫️ <b>En Yakın Direnç:</b> ${res:,.4f} (<code>{d_res:+.1f}%</code>)"
+            )
 
         tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
         trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
@@ -245,6 +283,7 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
             f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
             f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
             f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
+            f"{sr_metni}"
         )
 
     return None
@@ -289,7 +328,6 @@ def main():
     now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
     scan_15m, scan_1h = determine_crypto_modes(now_tsi)
     
-    # Gece saatindeyse hiçbir şey yapmadan anında kapanır
     if not scan_15m and not scan_1h:
         print(f"Gece sessiz mod aktif (Saat: {now_tsi.strftime('%H:%M')} TSİ). Tarama yapılmıyor.")
         return
