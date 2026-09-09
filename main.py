@@ -194,6 +194,46 @@ def calculate_support_resistance(df: pd.DataFrame, idx: int = -1):
     except Exception:
         return None, None, 0.0, 0.0
 
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, kanal_renk: str, nokta_renk: str, d_sup: float, d_res: float):
+    """Göreceli Hacim (RVol) ve 1-5 Yıldız Sinyal Güven Puanı hesabı."""
+    try:
+        vol = df['Volume'].squeeze()
+        curr_vol = float(vol.iloc[idx])
+        window = 20
+        if len(vol) > window + 1:
+            avg_vol = float(vol.iloc[-window-1:-1].mean())
+        else:
+            avg_vol = float(vol.mean())
+            
+        rvol = curr_vol / avg_vol if avg_vol > 0 else 1.0
+        
+        if rvol >= 1.5:
+            hacim_metni = f"🚀 Çok Güçlü (Ortalamanın {rvol:.1f}x Katı)"
+        elif rvol >= 1.1:
+            hacim_metni = f"🟢 Güçlü (Ortalamanın {rvol:.1f}x Katı)"
+        elif rvol >= 0.8:
+            hacim_metni = f"⚪ Normal (Ortalamanın {rvol:.1f}x Katı)"
+        else:
+            hacim_metni = f"⚠️ Zayıf (Ortalamanın {rvol:.1f}x Katı)"
+
+        puan = 1
+        if (sig_type == "BUY" and "Yeşil" in kanal_renk) or (sig_type == "SELL" and "Kırmızı" in kanal_renk):
+            puan += 1
+        if (sig_type == "BUY" and "Yeşil" in nokta_renk) or (sig_type == "SELL" and "Kırmızı" in nokta_renk):
+            puan += 1
+        if rvol >= 1.1:
+            puan += 1
+        if sig_type == "BUY" and abs(d_res) >= 0.50:
+            puan += 1
+        elif sig_type == "SELL" and abs(d_sup) >= 0.50:
+            puan += 1
+
+        yildizlar = "⭐" * puan
+        skor_metni = f"{yildizlar} ({puan}/5)"
+        return hacim_metni, skor_metni
+    except Exception:
+        return "⚪ Normal", "⭐⭐⭐ (3/5)"
+
 def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) oluşturur."""
     df = clean_df(df_1h)
@@ -209,7 +249,8 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
         'Open': 'first',
         'High': 'max',
         'Low': 'min',
-        'Close': 'last'
+        'Close': 'last',
+        'Volume': 'sum'
     })
     
     new_idx = []
@@ -286,6 +327,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
 
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
         sup, res, d_sup, d_res = calculate_support_resistance(df, target_idx)
+        hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, "BUY", kanal_renk, nokta_renk, d_sup, d_res)
 
         sr_metni = ""
         if sup is not None and res is not None:
@@ -304,6 +346,8 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             f"💵 <b>Fiyat:</b> {candle_price:.2f} TL\n"
             f"📊 <b>DMI-Stoch:</b> {stoch.iloc[target_idx]:.1f} (Önceki: {stoch.iloc[target_idx-1]:.1f})\n"
             f"🎯 <b>Tetikleyici:</b> DMI-Stoch 10 seviyesini yukarı kesti ('B')\n\n"
+            f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
+            f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
             f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
             f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
             f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
@@ -331,6 +375,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
 
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
         sup, res, d_sup, d_res = calculate_support_resistance(df, target_idx)
+        hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, "SELL", kanal_renk, nokta_renk, d_sup, d_res)
 
         sr_metni = ""
         if sup is not None and res is not None:
@@ -349,6 +394,8 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             f"💵 <b>Fiyat:</b> {candle_price:.2f} TL\n"
             f"📊 <b>DMI-Stoch:</b> {stoch.iloc[target_idx]:.1f} (Önceki: {stoch.iloc[target_idx-1]:.1f})\n"
             f"🎯 <b>Tetikleyici:</b> DMI-Stoch 90 seviyesini aşağı kesti ('S')\n\n"
+            f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
+            f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
             f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
             f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
             f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
