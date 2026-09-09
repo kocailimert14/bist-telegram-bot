@@ -14,16 +14,13 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
 
-# ABD Borsalarının En İyi 80+ Şirketi (GOOGL ve GOOG dahil)
+# ABD Borsalarının En İyi 50 Şirketi (S&P 500 ve Nasdaq Liderleri)
 US_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "AVGO", "ORCL", "CRM",
-    "AMD", "QCOM", "INTC", "CSCO", "IBM", "TXN", "AMAT", "MU", "LRCX", "NOW",
-    "ADBE", "PANW", "SNPS", "CDNS", "CRWD", "PLTR", "UBER", "ABNB", "COIN", "MSTR",
-    "JPM", "BAC", "WFC", "C", "GS", "MS", "V", "MA", "AXP", "PYPL",
-    "BLK", "SCHW", "PGR", "CB", "SPGI", "LLY", "JNJ", "UNH", "ABBV", "MRK",
-    "PFE", "TMO", "ABT", "DHR", "ISRG", "WMT", "COST", "HD", "PG", "KO",
-    "PEP", "MCD", "NKE", "SBUX", "TGT", "CAT", "DE", "GE", "HON", "UNP",
-    "BA", "LMT", "RTX", "XOM", "CVX", "DIS", "NFLX", "CMCSA", "VZ", "T"
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "AVGO", "ORCL",
+    "CRM",  "AMD",  "QCOM", "INTC",  "CSCO", "IBM",  "TXN",  "AMAT", "MU",   "NOW",
+    "ADBE", "PLTR", "UBER", "ABNB",  "COIN", "MSTR", "JPM",  "BAC",  "WFC",  "GS",
+    "MS",   "V",    "MA",   "AXP",   "PYPL", "BLK",  "LLY",  "JNJ",  "UNH",  "ABBV",
+    "MRK",  "PFE",  "ISRG", "WMT",   "COST", "HD",   "PG",   "KO",   "CAT",  "GE", "DIS"
 ]
 
 def send_telegram(message: str) -> bool:
@@ -73,8 +70,10 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
         res[i] = (prev * (length - 1) + vals[i]) / length
     return pd.Series(res, index=series.index)
 
-def calculate_slingshot(df: pd.DataFrame, idx: int):
+def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
     """Sling Shot System: Düz Kanal Rengi ve Noktasal Trend Rengi hesabı."""
+    if df is None or len(df) < 15:
+        return "Belirsiz", "Belirsiz"
     try:
         close = df['Close'].squeeze()
         high = df['High'].squeeze()
@@ -169,7 +168,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
     except Exception:
         return None, None, 0.0, 0.0
 
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, kanal_renk: str, nokta_renk: str, d_sup: float, d_res: float):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float):
     """Göreceli Hacim (RVol) ve 1-5 Yıldız Sinyal Güven Puanı hesabı."""
     try:
         vol = df['Volume'].squeeze()
@@ -192,9 +191,11 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, kanal_re
             hacim_metni = f"⚠️ Zayıf (Ortalamanın {rvol:.1f}x Katı)"
 
         puan = 1
-        if (sig_type == "BUY" and "Yeşil" in kanal_renk) or (sig_type == "SELL" and "Kırmızı" in kanal_renk):
+        k1h, _ = ss_multi.get("1h", ("", ""))
+        k15, _ = ss_multi.get("15m", ("", ""))
+        if (sig_type == "BUY" and "Yeşil" in k1h) or (sig_type == "SELL" and "Kırmızı" in k1h):
             puan += 1
-        if (sig_type == "BUY" and "Yeşil" in nokta_renk) or (sig_type == "SELL" and "Kırmızı" in nokta_renk):
+        if (sig_type == "BUY" and "Yeşil" in k15) or (sig_type == "SELL" and "Kırmızı" in k15):
             puan += 1
         if rvol >= 1.1:
             puan += 1
@@ -209,8 +210,8 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, kanal_re
     except Exception:
         return "⚪ Normal", "⭐⭐⭐ (3/5)"
 
-def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
-    """TradingView Pine Script ECO kuralıyla birebir aynı: SADECE canlı mumu değerlendirir."""
+def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
+    """TradingView Pine Script ECO: SADECE o an açık olan canlı mumdaki kesişim."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -249,7 +250,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Pine Script: SADECE o an açık olan canlı mum kontrol edilir (iloc[-1])
+    # SADECE O AN AÇIK OLAN CANLI MUM KONTROL EDİLİR
     c_prev = float(stoch.iloc[-2]) # Stoch[1]
     c_curr = float(stoch.iloc[-1]) # Stoch (Canlı Mum)
 
@@ -264,7 +265,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     target_idx = -1
     candle_time = df.index[target_idx]
 
-    # Zaman Tazelik Kontrolü (Hatasız Timezone-Aware hesaplama)
+    # Zaman Tazelik Kontrolü
     now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
     if candle_time.date() != now_tsi.date():
         return None
@@ -274,14 +275,15 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
         return None
 
     candle_price = float(close.iloc[target_idx])
-    durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
     time_str = candle_time.strftime('%H:%M')
-
     tv_link = f"https://tr.tradingview.com/chart/?symbol={symbol}"
 
-    kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, kanal_renk, nokta_renk, d_sup, d_res)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res)
+
+    ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
+    ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
+    ss_4h_k, ss_4h_n = ss_multi.get("4h", ("Belirsiz", "Belirsiz"))
 
     sr_metni = ""
     if sup is not None and res is not None:
@@ -299,39 +301,54 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
         f"📌 <b>Hisse:</b> <a href=\"{tv_link}\">#{symbol}</a> <i>(Grafiği Aç)</i>\n"
         f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
         f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-        f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
+        f"⚡ <b>Mum Durumu:</b> ⚠️ CANLI MUM (Anlık Sinyal)\n"
         f"💵 <b>Fiyat:</b> ${candle_price:,.2f}\n"
         f"📊 <b>DMI-Stoch:</b> {c_curr:.1f} (Önceki: {c_prev:.1f})\n"
         f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
         f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
         f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
-        f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
-        f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
-        f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
+        f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
+        f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
+        f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
+        f"▫️ <b>4 Saat (4h):</b> {ss_4h_k} Kanal | {ss_4h_n} Nokta"
         f"{sr_metni}"
     )
 
 def scan_ticker(symbol: str):
-    """Tek bir hisse için hem 30m hem 1h canlı mumunu tarar."""
+    """Tek bir hisse için 15m, 1h ve 4h SlingShot teyitlerini hesaplayıp canlı mumu tarar."""
     signals = []
-    
-    # 1. 30 Dakikalık Canlı Mum
     try:
+        # Multi-Timeframe verilerini çek
+        df_15m = yf.download(symbol, period="5d", interval="15m", progress=False)
+        clean_15m = clean_df(df_15m)
+        df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
+        clean_1h = clean_df(df_1h)
         df_30m = yf.download(symbol, period="1mo", interval="30m", progress=False)
-        s30m = evaluate_eco(df_30m, symbol, "30 Dakika (30m)")
+        clean_30m = clean_df(df_30m)
+
+        # 4 Saatlik mumu oluştur
+        df_4h = clean_1h.resample("4h").agg({
+            'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
+        }).dropna()
+
+        ss_multi = {
+            "15m": calculate_slingshot(clean_15m, -1),
+            "1h": calculate_slingshot(clean_1h, -1),
+            "4h": calculate_slingshot(df_4h, -1)
+        }
+
+        # 1. 30 Dakikalık Canlı Mum
+        s30m = evaluate_eco(clean_30m, symbol, "30 Dakika (30m)", ss_multi)
         if s30m:
             signals.append(s30m)
-    except Exception as e:
-        print(f"{symbol} 30m hatası: {e}")
 
-    # 2. 1 Saatlik Canlı Mum
-    try:
-        df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
-        s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
+        # 2. 1 Saatlik Canlı Mum
+        s1h = evaluate_eco(clean_1h, symbol, "1 Saat (1h)", ss_multi)
         if s1h:
             signals.append(s1h)
+
     except Exception as e:
-        print(f"{symbol} 1h hatası: {e}")
+        print(f"{symbol} analiz hatası: {e}")
 
     return signals
 
