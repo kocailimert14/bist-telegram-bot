@@ -165,7 +165,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
         res_peaks = []
         sup_troughs = []
         
-        k = 3 # 3 mum sağı ve solu teyidi
+        k = 3
         for i in range(k, len(sub_high) - k):
             if all(sub_high[i] >= sub_high[i-j] for j in range(1, k+1)) and all(sub_high[i] >= sub_high[i+j] for j in range(1, k+1)):
                 dist = ((sub_high[i] - curr_price) / curr_price) * 100
@@ -320,6 +320,9 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
         time_str = candle_time.strftime('%H:%M')
         coin_name = symbol.replace("USDT", "")
         
+        # TradingView Doğrudan Grafik Linki
+        tv_link = f"https://tr.tradingview.com/chart/?symbol=BINANCE:{symbol}"
+
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
         sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
         hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, kanal_renk, nokta_renk, d_sup, d_res)
@@ -337,7 +340,7 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, tf_key: st
 
         return (
             f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
-            f"🪙 <b>Koin:</b> #{coin_name}/USDT\n"
+            f"🪙 <b>Koin:</b> <a href=\"{tv_link}\">#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
             f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
             f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
             f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
