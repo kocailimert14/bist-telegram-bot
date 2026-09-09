@@ -14,9 +14,9 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
 
-# ABD Borsalarının En İyi 80 Şirketi (Mega Caps, Tech, Finance, Health, Consumer, Industrial)
+# ABD Borsalarının En İyi 80+ Şirketi (GOOGL ve GOOG dahil)
 US_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "ORCL", "CRM",
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "AVGO", "ORCL", "CRM",
     "AMD", "QCOM", "INTC", "CSCO", "IBM", "TXN", "AMAT", "MU", "LRCX", "NOW",
     "ADBE", "PANW", "SNPS", "CDNS", "CRWD", "PLTR", "UBER", "ABNB", "COIN", "MSTR",
     "JPM", "BAC", "WFC", "C", "GS", "MS", "V", "MA", "AXP", "PYPL",
@@ -264,10 +264,13 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     target_idx = -1
     candle_time = df.index[target_idx]
 
-    # Zaman Tazelik Kontrolü (Mum son 75 dakika içinde olmalıdır)
-    now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
+    # Zaman Tazelik Kontrolü (Hatasız Timezone-Aware hesaplama)
+    now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
+    if candle_time.date() != now_tsi.date():
+        return None
+
     age_minutes = (now_tsi - candle_time).total_seconds() / 60.0
-    if age_minutes > 75:
+    if age_minutes > 120:
         return None
 
     candle_price = float(close.iloc[target_idx])
@@ -318,8 +321,8 @@ def scan_ticker(symbol: str):
         s30m = evaluate_eco(df_30m, symbol, "30 Dakika (30m)")
         if s30m:
             signals.append(s30m)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"{symbol} 30m hatası: {e}")
 
     # 2. 1 Saatlik Canlı Mum
     try:
@@ -327,13 +330,13 @@ def scan_ticker(symbol: str):
         s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
         if s1h:
             signals.append(s1h)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"{symbol} 1h hatası: {e}")
 
     return signals
 
 def main():
-    now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
+    now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
     
     # ABD Seans Saatleri: 16:30 - 23:00 TSİ
     if now_tsi.hour < 16 or (now_tsi.hour == 16 and now_tsi.minute < 20) or now_tsi.hour >= 23:
