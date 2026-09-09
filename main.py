@@ -168,6 +168,32 @@ def calculate_slingshot(df: pd.DataFrame, idx: int):
     except Exception:
         return "Belirsiz", "Belirsiz"
 
+def calculate_support_resistance(df: pd.DataFrame, idx: int = -1):
+    """Otomatik Swing Destek & Direnç Seviyeleri ve Yüzdesel Mesafeleri."""
+    try:
+        close = df['Close'].squeeze()
+        high = df['High'].squeeze()
+        low = df['Low'].squeeze()
+        
+        curr_price = float(close.iloc[idx])
+        window = min(30, len(df))
+        
+        sub_high = high.iloc[-window:]
+        sub_low = low.iloc[-window:]
+        
+        higher_highs = sub_high[sub_high > curr_price]
+        resistance = float(higher_highs.min()) if not higher_highs.empty else float(sub_high.max())
+        
+        lower_lows = sub_low[sub_low < curr_price]
+        support = float(lower_lows.max()) if not lower_lows.empty else float(sub_low.min())
+        
+        dist_sup = ((support - curr_price) / curr_price) * 100
+        dist_res = ((resistance - curr_price) / curr_price) * 100
+        
+        return support, resistance, dist_sup, dist_res
+    except Exception:
+        return None, None, 0.0, 0.0
+
 def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     """TradingView BIST 4 saatlik mumlarını (09:00-13:00 ve 13:00-18:10) oluşturur."""
     df = clean_df(df_1h)
@@ -233,7 +259,6 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Saf ECO değerleri
     c_curr = float(stoch.iloc[-1])
     c_prev = float(stoch.iloc[-2])
     c_prev2 = float(stoch.iloc[-3]) if len(stoch) >= 3 else c_prev
@@ -260,6 +285,15 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             time_str = candle_time.strftime('%d.%m.%Y')
 
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
+        sup, res, d_sup, d_res = calculate_support_resistance(df, target_idx)
+
+        sr_metni = ""
+        if sup is not None and res is not None:
+            sr_metni = (
+                f"\n\n<b>🎯 Destek & Direnç Seviyeleri:</b>\n"
+                f"▫️ <b>En Yakın Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
+                f"▫️ <b>En Yakın Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
+            )
 
         return (
             f"🟢 <b>BIST AL SİNYALİ (Evan Cabral - ECO)</b>\n\n"
@@ -273,6 +307,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
             f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
             f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
+            f"{sr_metni}"
         )
 
     # 2. SAT SİNYALİ KONTROLÜ
@@ -295,6 +330,15 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             time_str = candle_time.strftime('%d.%m.%Y')
 
         kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
+        sup, res, d_sup, d_res = calculate_support_resistance(df, target_idx)
+
+        sr_metni = ""
+        if sup is not None and res is not None:
+            sr_metni = (
+                f"\n\n<b>🎯 Destek & Direnç Seviyeleri:</b>\n"
+                f"▫️ <b>En Yakın Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
+                f"▫️ <b>En Yakın Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
+            )
 
         return (
             f"🔴 <b>BIST SAT SİNYALİ (Evan Cabral - ECO)</b>\n\n"
@@ -308,6 +352,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
             f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
             f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
             f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
+            f"{sr_metni}"
         )
 
     return None
@@ -317,7 +362,6 @@ def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
     signals = []
     df_1h = None
     
-    # 1 Saatlik veya 4 Saatlik gerekiyorsa 1h verisini indir
     if scan_1h or scan_4h:
         try:
             df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
@@ -376,7 +420,7 @@ def determine_scan_modes(now_tsi):
     if h == 17 and 20 <= m <= 35:
         scan_1d = True
         
-    # Eğer bu saatlerin dışında manuel çalıştırılmışsa hepsini test amaçlı tara:
+    # Manuel test çalıştırmalarında hepsi aktif
     if not scan_1h and not scan_4h and not scan_1d:
         scan_1h, scan_4h, scan_1d = True, True, True
 
