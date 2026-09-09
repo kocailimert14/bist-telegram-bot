@@ -284,7 +284,7 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     return df_4h
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
-    """Pine Script ECO göstergesini saf mantığıyla hesaplar."""
+    """TradingView Pine Script ECO kuralıyla birebir aynı: SADECE o anki mumdaki kesişimi yakalar."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -323,115 +323,65 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    c_curr = float(stoch.iloc[-1])
-    c_prev = float(stoch.iloc[-2])
-    c_prev2 = float(stoch.iloc[-3]) if len(stoch) >= 3 else c_prev
+    # TradingView Pine Script formülü:
+    # crossUp = Stoch[1] < 10 and Stoch > 10
+    # crossDown = Stoch[1] > 90 and Stoch < 90
+    c_prev = float(stoch.iloc[-2]) # Stoch[1]
+    c_curr = float(stoch.iloc[-1]) # Stoch (Canlı Mum)
+
+    sig_type = None
+    if c_prev < 10 and c_curr > 10:
+        sig_type = "BUY"
+    elif c_prev > 90 and c_curr < 90:
+        sig_type = "SELL"
+    else:
+        # Kesişim bu mumda değilse kesinlikle sinyal verme!
+        return None
+
+    target_idx = -1
+    durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
+    candle_time = df.index[target_idx]
+    candle_price = float(close.iloc[target_idx])
+
+    if "Saat" in tf_label:
+        time_str = candle_time.strftime('%H:00')
+    else:
+        time_str = candle_time.strftime('%d.%m.%Y')
 
     hisse_adi = symbol.replace('.IS', '')
+    tv_link = f"https://tr.tradingview.com/chart/?symbol=BIST:{hisse_adi}"
 
-    # 1. AL SİNYALİ KONTROLÜ
-    if (c_prev < 10 and c_curr > 10) or (c_prev2 < 10 and c_prev > 10):
-        if c_prev < 10 and c_curr > 10:
-            target_idx = -1
-            durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
-        else:
-            target_idx = -2
-            durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
+    kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
+    sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, kanal_renk, nokta_renk, d_sup, d_res)
 
-        candle_time = df.index[target_idx]
-        candle_price = float(close.iloc[target_idx])
-
-        if "Saat" in tf_label:
-            if getattr(candle_time, 'minute', 0) != 0:
-                candle_time = candle_time + pd.Timedelta(minutes=30)
-            time_str = candle_time.strftime('%H:00')
-        else:
-            time_str = candle_time.strftime('%d.%m.%Y')
-
-        # TradingView Doğrudan Grafik Linki
-        tv_link = f"https://tr.tradingview.com/chart/?symbol=BIST:{hisse_adi}"
-
-        kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
-        sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-        hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, "BUY", kanal_renk, nokta_renk, d_sup, d_res)
-
-        sr_metni = ""
-        if sup is not None and res is not None:
-            sr_metni = (
-                f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
-                f"▫️ <b>Ana Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
-                f"▫️ <b>Ana Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
-            )
-
-        return (
-            f"🟢 <b>BIST AL SİNYALİ (Evan Cabral - ECO)</b>\n\n"
-            f"📌 <b>Hisse:</b> <a href=\"{tv_link}\">#{hisse_adi}</a> <i>(Grafiği Aç)</i>\n"
-            f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
-            f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-            f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
-            f"💵 <b>Fiyat:</b> {candle_price:.2f} TL\n"
-            f"📊 <b>DMI-Stoch:</b> {stoch.iloc[target_idx]:.1f} (Önceki: {stoch.iloc[target_idx-1]:.1f})\n"
-            f"🎯 <b>Tetikleyici:</b> DMI-Stoch 10 seviyesini yukarı kesti ('B')\n\n"
-            f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
-            f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
-            f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
-            f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
-            f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
-            f"{sr_metni}"
+    sr_metni = ""
+    if sup is not None and res is not None:
+        sr_metni = (
+            f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
+            f"▫️ <b>Ana Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
+            f"▫️ <b>Ana Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
         )
 
-    # 2. SAT SİNYALİ KONTROLÜ
-    elif (c_prev > 90 and c_curr < 90) or (c_prev2 > 90 and c_prev < 90):
-        if c_prev > 90 and c_curr < 90:
-            target_idx = -1
-            durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
-        else:
-            target_idx = -2
-            durum_metni = "✅ KAPANMIŞ MUM (Kesinleşmiş)"
+    tag = "🟢 <b>BIST AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>BIST SAT SİNYALİ</b>"
+    trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
 
-        candle_time = df.index[target_idx]
-        candle_price = float(close.iloc[target_idx])
-
-        if "Saat" in tf_label:
-            if getattr(candle_time, 'minute', 0) != 0:
-                candle_time = candle_time + pd.Timedelta(minutes=30)
-            time_str = candle_time.strftime('%H:00')
-        else:
-            time_str = candle_time.strftime('%d.%m.%Y')
-
-        # TradingView Doğrudan Grafik Linki
-        tv_link = f"https://tr.tradingview.com/chart/?symbol=BIST:{hisse_adi}"
-
-        kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
-        sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-        hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, "SELL", kanal_renk, nokta_renk, d_sup, d_res)
-
-        sr_metni = ""
-        if sup is not None and res is not None:
-            sr_metni = (
-                f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
-                f"▫️ <b>Ana Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
-                f"▫️ <b>Ana Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
-            )
-
-        return (
-            f"🔴 <b>BIST SAT SİNYALİ (Evan Cabral - ECO)</b>\n\n"
-            f"📌 <b>Hisse:</b> <a href=\"{tv_link}\">#{hisse_adi}</a> <i>(Grafiği Aç)</i>\n"
-            f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
-            f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-            f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
-            f"💵 <b>Fiyat:</b> {candle_price:.2f} TL\n"
-            f"📊 <b>DMI-Stoch:</b> {stoch.iloc[target_idx]:.1f} (Önceki: {stoch.iloc[target_idx-1]:.1f})\n"
-            f"🎯 <b>Tetikleyici:</b> DMI-Stoch 90 seviyesini aşağı kesti ('S')\n\n"
-            f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
-            f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
-            f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
-            f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
-            f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
-            f"{sr_metni}"
-        )
-
-    return None
+    return (
+        f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
+        f"📌 <b>Hisse:</b> <a href=\"{tv_link}\">#{hisse_adi}</a> <i>(Grafiği Aç)</i>\n"
+        f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
+        f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
+        f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
+        f"💵 <b>Fiyat:</b> {candle_price:.2f} TL\n"
+        f"📊 <b>DMI-Stoch:</b> {c_curr:.1f} (Önceki: {c_prev:.1f})\n"
+        f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
+        f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
+        f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
+        f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
+        f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
+        f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
+        f"{sr_metni}"
+    )
 
 def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
     """Sadece planlanan saatteki ilgili periyotları analiz eder."""
@@ -500,7 +450,6 @@ def main():
     now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
     scan_1h, scan_4h, scan_1d = determine_scan_modes(now_tsi)
     
-    # Eğer seans dışıysa hiçbir şey yapmadan anında kapanır
     if not scan_1h and not scan_4h and not scan_1d:
         print(f"Seans dışı saat ({now_tsi.strftime('%H:%M')} TSİ). Tarama yapılmıyor.")
         return
