@@ -14,65 +14,19 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
 
-# Borsa İstanbul'daki Tüm Hisseler (552 Hisse Tam Liste)
-BIST_TICKERS = sorted(list(set([
-    "A1CAP.IS", "ACSEL.IS", "ADEL.IS", "ADESE.IS", "ADGYO.IS", "AEFES.IS", "AFYON.IS", "AGESA.IS", "AGHOL.IS", "AGROT.IS",
-    "AGYO.IS", "AHGAZ.IS", "AHSGY.IS", "AKBNK.IS", "AKCNS.IS", "AKENR.IS", "AKFGY.IS", "AKFYE.IS", "AKGRT.IS", "AKMGY.IS",
-    "AKSA.IS", "AKSEN.IS", "AKSGY.IS", "AKSUE.IS", "AKTIF.IS", "ALARK.IS", "ALBRK.IS", "ALCAR.IS", "ALCTL.IS", "ALFAS.IS",
-    "ALGYO.IS", "ALKA.IS", "ALKIM.IS", "ALMAD.IS", "ALTNY.IS", "ALVES.IS", "ANELE.IS", "ANGEN.IS", "ANHYT.IS", "ANSGR.IS",
-    "ARASE.IS", "ARCLK.IS", "ARDYZ.IS", "ARENA.IS", "ARSAN.IS", "ARTMS.IS", "ARZUM.IS", "ASELS.IS", "ASGYO.IS", "ASTOR.IS",
-    "ASUZU.IS", "ATAGY.IS", "ATAKP.IS", "ATATP.IS", "ATEKS.IS", "ATSYH.IS", "AVGYO.IS", "AVHOL.IS", "AVOD.IS", "AVPGY.IS",
-    "AVTUR.IS", "AYCES.IS", "AYDEM.IS", "AYEN.IS", "AYES.IS", "AYGAZ.IS", "AZTEK.IS", "BAGFS.IS", "BAKAB.IS", "BALAT.IS",
-    "BANVT.IS", "BARMA.IS", "BASCM.IS", "BASGZ.IS", "BAYRK.IS", "BEGYO.IS", "BENGV.IS", "BERA.IS", "BEYAZ.IS", "BFREN.IS",
-    "BIENY.IS", "BIGCH.IS", "BIMAS.IS", "BINHO.IS", "BIOEN.IS", "BIZIM.IS", "BJKAS.IS", "BLCYT.IS", "BMSCH.IS", "BMSTL.IS",
-    "BNTAS.IS", "BOBET.IS", "BORLS.IS", "BORSK.IS", "BOSSA.IS", "BRCEG.IS", "BRCVO.IS", "BRISA.IS", "BRKO.IS", "BRKSN.IS",
-    "BRMEN.IS", "BRSAN.IS", "BRYAT.IS", "BSOKE.IS", "BTCIM.IS", "BUCIM.IS", "BURCE.IS", "BURVA.IS", "BVSAN.IS", "BYDNR.IS",
-    "CANTE.IS", "CASA.IS", "CATES.IS", "CCOLA.IS", "CELHA.IS", "CEMAS.IS", "CEMTS.IS", "CEMZY.IS", "CEOEM.IS", "CIMSA.IS",
-    "CLEBI.IS", "CMBTN.IS", "CMENT.IS", "CONSE.IS", "COSMO.IS", "CRDFA.IS", "CRFSA.IS", "CUSAN.IS", "CVKMD.IS", "CWENE.IS",
-    "DAGI.IS", "DAGHL.IS", "DAPGM.IS", "DARDL.IS", "DENGE.IS", "DERHL.IS", "DERIM.IS", "DESA.IS", "DESPC.IS", "DEVA.IS",
-    "DGATE.IS", "DGGYO.IS", "DGNMO.IS", "DIRIT.IS", "DITAS.IS", "DMRGD.IS", "DMSAS.IS", "DNISI.IS", "DOAS.IS", "DOBUR.IS",
-    "DOCO.IS", "DOFER.IS", "DOGUB.IS", "DOHOL.IS", "DOKTA.IS", "DURDO.IS", "DURKN.IS", "DYOBY.IS", "DZGYO.IS", "EBEBK.IS",
-    "ECZYT.IS", "EDATA.IS", "EDIP.IS", "EGEEN.IS", "EGGUB.IS", "EGPRO.IS", "EGSER.IS", "EKGYO.IS", "EKIZ.IS", "EKOS.IS",
-    "EKSUN.IS", "ELITE.IS", "EMKEL.IS", "EMNIS.IS", "ENERY.IS", "ENJSA.IS", "ENKAI.IS", "ENSRI.IS", "ENTRA.IS", "EPLAS.IS",
-    "ERBOS.IS", "ERCB.IS", "EREGL.IS", "ERSU.IS", "ESCAR.IS", "ESCOM.IS", "ESEN.IS", "ETILR.IS", "ETYAT.IS", "EUHOL.IS",
-    "EUKYO.IS", "EUPWR.IS", "EUREN.IS", "EUYO.IS", "EYGYO.IS", "FADE.IS", "FENER.IS", "FLAP.IS", "FMIZP.IS", "FONET.IS",
-    "FORMT.IS", "FORTE.IS", "FRIGO.IS", "FROTO.IS", "FZLGY.IS", "GARAN.IS", "GARFA.IS", "GEDIK.IS", "GEDZA.IS", "GENIL.IS",
-    "GENTS.IS", "GEREL.IS", "GESAN.IS", "GIPTA.IS", "GLBMD.IS", "GLCVY.IS", "GLRYH.IS", "GLYHO.IS", "GMTAS.IS", "GOKNR.IS",
-    "GOLTS.IS", "GOODY.IS", "GOZDE.IS", "GRNYO.IS", "GRSEL.IS", "GRTHO.IS", "GSDDE.IS", "GSDHO.IS", "GSRAY.IS", "GUBRF.IS",
-    "GWIND.IS", "GZNMI.IS", "HALKB.IS", "HATEK.IS", "HATSN.IS", "HEDEF.IS", "HEKTS.IS", "HKTM.IS", "HLGYO.IS", "HOROZ.IS",
-    "HRKET.IS", "HTTBT.IS", "HUBVC.IS", "HUNER.IS", "HURGZ.IS", "ICBCT.IS", "ICUGS.IS", "IDGYO.IS", "IEYHO.IS", "IHAAS.IS",
-    "IHEVA.IS", "IHGZT.IS", "IHLAS.IS", "IHLGM.IS", "IHYAY.IS", "IMASM.IS", "INDES.IS", "INFO.IS", "INGRM.IS", "INVES.IS",
-    "IPEKE.IS", "ISATR.IS", "ISBIR.IS", "ISBTR.IS", "ISCTR.IS", "ISDMR.IS", "ISFIN.IS", "ISGSY.IS", "ISGYO.IS", "ISKPL.IS",
-    "ISKUR.IS", "ISMEN.IS", "ISYAT.IS", "IZENR.IS", "IZFAS.IS", "IZINV.IS", "IZMDC.IS", "JANTS.IS", "KAPLM.IS", "KAREL.IS",
-    "KARSN.IS", "KARTN.IS", "KARYA.IS", "KATMR.IS", "KAYSE.IS", "KBORU.IS", "KCAER.IS", "KCHOL.IS", "KFEIN.IS", "KGYO.IS",
-    "KIMMR.IS", "KLGYO.IS", "KLKIM.IS", "KLMSN.IS", "KLNMA.IS", "KLRHO.IS", "KLSER.IS", "KLSYN.IS", "KMPUR.IS", "KNFRT.IS",
-    "KOCMT.IS", "KONKA.IS", "KONTR.IS", "KONYA.IS", "KOPOL.IS", "KORDS.IS", "KOTON.IS", "KOZAA.IS", "KOZAL.IS", "KRDMA.IS",
-    "KRDMB.IS", "KRDMD.IS", "KRGYO.IS", "KRONT.IS", "KRPLS.IS", "KRSTL.IS", "KRTEK.IS", "KRVGD.IS", "KSTUR.IS", "KTLEV.IS",
-    "KTSKR.IS", "KUTPO.IS", "KUVVA.IS", "KUYAS.IS", "KZBGY.IS", "KZGYO.IS", "LIDER.IS", "LIDFA.IS", "LILAK.IS", "LINK.IS",
-    "LKMNH.IS", "LMKDC.IS", "LOGOS.IS", "LRSHO.IS", "LUKSK.IS", "LYDHO.IS", "MAALT.IS", "MACKO.IS", "MAGEN.IS", "MAKIM.IS",
-    "MAKTK.IS", "MANAS.IS", "MARBL.IS", "MARKA.IS", "MARTI.IS", "MAVI.IS", "MEDTR.IS", "MEGAP.IS", "MEGMT.IS", "MEKAG.IS",
-    "MEPET.IS", "MERCN.IS", "MERIT.IS", "MERKO.IS", "METRO.IS", "METUR.IS", "MEYHO.IS", "MGENR.IS", "MGROS.IS", "MIATK.IS",
-    "MIPAZ.IS", "MMCAS.IS", "MNDRS.IS", "MNDTR.IS", "MOBTL.IS", "MOGAN.IS", "MOPAS.IS", "MPARK.IS", "MRGYO.IS", "MRSHL.IS",
-    "MSGYO.IS", "MTRKS.IS", "MTRYO.IS", "MZHLD.IS", "NATEN.IS", "NETAS.IS", "NIBAS.IS", "NTGAZ.IS", "NTHOL.IS", "NUGYO.IS",
-    "NUHCM.IS", "OBAMS.IS", "OBASE.IS", "ODAS.IS", "OFSYM.IS", "ONCSM.IS", "ORCAY.IS", "ORGE.IS", "ORMA.IS", "OSMEN.IS",
-    "OSTIM.IS", "OTKAR.IS", "OTTO.IS", "OYAKC.IS", "OYAYO.IS", "OYLUM.IS", "OYYAT.IS", "OZATD.IS", "OZGYO.IS", "OZKGY.IS",
-    "OZRDN.IS", "OZSUB.IS", "PAGYO.IS", "PAMEL.IS", "PAPIL.IS", "PARSN.IS", "PASEU.IS", "PATEK.IS", "PCILT.IS", "PEKGY.IS",
-    "PENGD.IS", "PENTA.IS", "PETKM.IS", "PETUN.IS", "PGSUS.IS", "PINSU.IS", "PKART.IS", "PKENT.IS", "PLTUR.IS", "PNLSN.IS",
-    "PNSUT.IS", "POLHO.IS", "POLTK.IS", "PRDGS.IS", "PRKAB.IS", "PRKME.IS", "PRZMA.IS", "PSDTC.IS", "PSGYO.IS", "QNBFB.IS",
-    "QNBFL.IS", "QUAGR.IS", "RALYH.IS", "RAYSG.IS", "REEDR.IS", "RNPOL.IS", "RODRG.IS", "ROYAL.IS", "RTALB.IS", "RUBNS.IS",
-    "RYGYO.IS", "RYSAS.IS", "SAFKR.IS", "SAHOL.IS", "SAMAT.IS", "SANEL.IS", "SANFM.IS", "SANKO.IS", "SARKY.IS", "SARTN.IS",
-    "SASA.IS", "SAYAS.IS", "SDTTR.IS", "SEGYO.IS", "SEKFK.IS", "SEKUR.IS", "SELEC.IS", "SELVA.IS", "SEYKM.IS", "SILVR.IS",
-    "SISE.IS", "SKBNK.IS", "SKTAS.IS", "SKYMD.IS", "SMART.IS", "SMRTG.IS", "SNAYS.IS", "SNICA.IS", "SNKRN.IS", "SNPAM.IS",
-    "SODSN.IS", "SOKE.IS", "SOKM.IS", "SONME.IS", "SRVGY.IS", "SUMAS.IS", "SUNTK.IS", "SURGY.IS", "SUWEN.IS", "TABGD.IS",
-    "TARKM.IS", "TATEN.IS", "TATGD.IS", "TAVHL.IS", "TBORG.IS", "TCELL.IS", "TDGYO.IS", "TEKTU.IS", "TERA.IS", "TEZOL.IS",
-    "TETMT.IS", "TGSAS.IS", "THYAO.IS", "TKFEN.IS", "TKNSA.IS", "TLMAN.IS", "TMPOL.IS", "TMSN.IS", "TNZTP.IS", "TOASO.IS",
-    "TRCAS.IS", "TRGYO.IS", "TRILC.IS", "TSGYO.IS", "TSKB.IS", "TSPOR.IS", "TTKOM.IS", "TTRAK.IS", "TUCLK.IS", "TUKAS.IS",
-    "TUPRS.IS", "TUREX.IS", "TURGG.IS", "TURSG.IS", "UFUK.IS", "ULAS.IS", "ULKER.IS", "ULUFA.IS", "ULUSE.IS", "ULUUN.IS",
-    "UNLU.IS", "USAK.IS", "VAKBN.IS", "VAKFN.IS", "VAKKO.IS", "VANGD.IS", "VBTYZ.IS", "VERTU.IS", "VERUS.IS", "VESBE.IS",
-    "VESTL.IS", "VKFYO.IS", "VKGYO.IS", "VKING.IS", "VRGYO.IS", "YAPRK.IS", "YATAS.IS", "YAYLA.IS", "YGGYO.IS", "YGYO.IS",
-    "YEOTK.IS", "YESIL.IS", "YKBNK.IS", "YKSLN.IS", "YONGA.IS", "YUNSA.IS", "YYAPI.IS", "YYLGD.IS", "ZEDUR.IS", "ZELOT.IS",
-    "ZOREN.IS", "ZRGYO.IS"
-])))
+# BIST 100 En Büyük ve En Çok İşlem Gören 100 Şirket
+BIST_TICKERS = [
+    "THYAO.IS", "ASELS.IS", "EREGL.IS", "KCHOL.IS", "TUPRS.IS", "GARAN.IS", "AKBNK.IS", "YKBNK.IS", "ISCTR.IS", "BIMAS.IS",
+    "SISE.IS",  "SAHOL.IS", "FROTO.IS", "TOASO.IS", "ENKAI.IS", "PGSUS.IS", "KOZAL.IS", "PETKM.IS", "EKGYO.IS", "HEKTS.IS",
+    "SASA.IS",  "ASTOR.IS", "ALARK.IS", "ARCLK.IS", "GUBRF.IS", "KRDMD.IS", "KRDMB.IS", "ODAS.IS",  "OYAKC.IS", "SOKM.IS",
+    "TAVHL.IS", "PKART.IS", "TKFEN.IS", "TTKOM.IS", "TCELL.IS", "VESTL.IS", "MGROS.IS", "TURSG.IS", "VAKBN.IS", "HALKB.IS",
+    "ISGYO.IS", "DOHOL.IS", "KOZAA.IS", "IPEKE.IS", "BERA.IS",  "CIMSA.IS", "AKSA.IS",  "AKSEN.IS", "QUAGR.IS", "CANTE.IS",
+    "MIATK.IS", "REEDR.IS", "SDTTR.IS", "KONTR.IS", "EUPWR.IS", "GESAN.IS", "CWENE.IS", "ALFAS.IS", "BOSSA.IS", "BRSAN.IS",
+    "BRYAT.IS", "CCOLA.IS", "DOAS.IS",  "EGEEN.IS", "ECZYT.IS", "GENIL.IS", "GOKNR.IS", "GWIND.IS", "ISMEN.IS", "IZENR.IS",
+    "KCAER.IS", "KMPUR.IS", "KONKA.IS", "KORDS.IS", "MTRKS.IS", "OTKAR.IS", "PARSN.IS", "PENTA.IS", "SAYAS.IS", "SELEC.IS",
+    "SMRTG.IS", "TABGD.IS", "TATEN.IS", "TMSN.IS",  "TRGYO.IS", "TSKB.IS",  "TTRAK.IS", "ULKER.IS", "VESBE.IS", "YEOTK.IS",
+    "ZOREN.IS", "AGHOL.IS", "AHGAZ.IS", "AKFYE.IS", "ALGYO.IS", "ANSGR.IS", "BIENY.IS", "BIOEN.IS", "BOBET.IS", "CUSAN.IS"
+]
 
 def send_telegram(message: str) -> bool:
     """Telegram'a HTML formatında güvenli bildirim gönderir."""
@@ -121,8 +75,10 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
         res[i] = (prev * (length - 1) + vals[i]) / length
     return pd.Series(res, index=series.index)
 
-def calculate_slingshot(df: pd.DataFrame, idx: int):
+def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
     """Sling Shot System: Düz Kanal Rengi ve Noktasal Trend Rengi hesabı."""
+    if df is None or len(df) < 15:
+        return "Belirsiz", "Belirsiz"
     try:
         close = df['Close'].squeeze()
         high = df['High'].squeeze()
@@ -217,7 +173,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
     except Exception:
         return None, None, 0.0, 0.0
 
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, kanal_renk: str, nokta_renk: str, d_sup: float, d_res: float):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float):
     """Göreceli Hacim (RVol) ve 1-5 Yıldız Sinyal Güven Puanı hesabı."""
     try:
         vol = df['Volume'].squeeze()
@@ -240,9 +196,11 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, kanal_re
             hacim_metni = f"⚠️ Zayıf (Ortalamanın {rvol:.1f}x Katı)"
 
         puan = 1
-        if (sig_type == "BUY" and "Yeşil" in kanal_renk) or (sig_type == "SELL" and "Kırmızı" in kanal_renk):
+        k1h, _ = ss_multi.get("1h", ("", ""))
+        k15, _ = ss_multi.get("15m", ("", ""))
+        if (sig_type == "BUY" and "Yeşil" in k1h) or (sig_type == "SELL" and "Kırmızı" in k1h):
             puan += 1
-        if (sig_type == "BUY" and "Yeşil" in nokta_renk) or (sig_type == "SELL" and "Kırmızı" in nokta_renk):
+        if (sig_type == "BUY" and "Yeşil" in k15) or (sig_type == "SELL" and "Kırmızı" in k15):
             puan += 1
         if rvol >= 1.1:
             puan += 1
@@ -265,7 +223,6 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     
     df_copy = df.copy()
     df_copy['date'] = df_copy.index.date
-    # TSİ saatine göre 13:00 ayrımı
     df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
     
     df_4h = df_copy.groupby(['date', 'half']).agg({
@@ -283,8 +240,8 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     df_4h.index = pd.DatetimeIndex(new_idx)
     return df_4h
 
-def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
-    """TradingView Pine Script ECO kuralıyla birebir aynı: SADECE taze canlı mumu değerlendirir."""
+def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
+    """TradingView Pine Script ECO: SADECE o an açık olan canlı mumdaki kesişim."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -323,10 +280,9 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # Pine Script: crossUp = Stoch[1] < 10 and Stoch > 10
-    # Pine Script: crossDown = Stoch[1] > 90 and Stoch < 90
+    # SADECE O AN AÇIK OLAN CANLI MUM KONTROL EDİLİR
     c_prev = float(stoch.iloc[-2]) # Stoch[1]
-    c_curr = float(stoch.iloc[-1]) # Stoch (Son Mum)
+    c_curr = float(stoch.iloc[-1]) # Stoch (Canlı Mum)
 
     sig_type = None
     if c_prev < 10 and c_curr > 10:
@@ -339,24 +295,18 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     target_idx = -1
     candle_time = df.index[target_idx]
 
-    # ZAMAN VE TAZELİK KONTROLÜ (Bayat Veri Koruması - KRDMB gibi saatler öncesinde kalmış mumları eler)
-    now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
+    # Zaman Tazelik Kontrolü (Bayat veri koruması)
+    now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
     if candle_time.date() != now_tsi.date():
-        return None # Bugünün tarihi değilse çöpe at
+        return None
 
-    # 1 Saatlik grafik için: Mum yaşı en fazla 75 dakika olabilir! (Örn: 17:45 taramasında 13:00'te kalmış hisseler elenir!)
-    if tf_label == "1 Saat (1h)":
-        age_minutes = (now_tsi - candle_time).total_seconds() / 60.0
-        if age_minutes > 75:
-            return None
-
-    # 4 Saatlik grafik için: Saat 17:30 taramasında sabahki 09:00 mumu gönderilemez, mutlaka 13:00 mumu olmalı!
-    if tf_label == "4 Saat (4h)":
-        if now_tsi.hour >= 16 and candle_time.hour < 13:
-            return None
+    age_minutes = (now_tsi - candle_time).total_seconds() / 60.0
+    if tf_label == "1 Saat (1h)" and age_minutes > 120:
+        return None
+    if tf_label == "4 Saat (4h)" and now_tsi.hour >= 16 and candle_time.hour < 13:
+        return None
 
     candle_price = float(close.iloc[target_idx])
-    durum_metni = "⚠️ CANLI MUM (Anlık Sinyal)"
 
     if "Saat" in tf_label:
         time_str = candle_time.strftime('%H:00')
@@ -366,9 +316,12 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
     hisse_adi = symbol.replace('.IS', '')
     tv_link = f"https://tr.tradingview.com/chart/?symbol=BIST:{hisse_adi}"
 
-    kanal_renk, nokta_renk = calculate_slingshot(df, target_idx)
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, kanal_renk, nokta_renk, d_sup, d_res)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res)
+
+    ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
+    ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
+    ss_4h_k, ss_4h_n = ss_multi.get("4h", ("Belirsiz", "Belirsiz"))
 
     sr_metni = ""
     if sup is not None and res is not None:
@@ -386,43 +339,55 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str):
         f"📌 <b>Hisse:</b> <a href=\"{tv_link}\">#{hisse_adi}</a> <i>(Grafiği Aç)</i>\n"
         f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
         f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-        f"⚡ <b>Mum Durumu:</b> {durum_metni}\n"
+        f"⚡ <b>Mum Durumu:</b> ⚠️ CANLI MUM (Anlık Sinyal)\n"
         f"💵 <b>Fiyat:</b> {candle_price:.2f} TL\n"
         f"📊 <b>DMI-Stoch:</b> {c_curr:.1f} (Önceki: {c_prev:.1f})\n"
         f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
         f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
         f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
-        f"<b>📈 Trend Teyitleri (SlingShot):</b>\n"
-        f"▫️ <b>Düz Trend Kanalı:</b> {kanal_renk}\n"
-        f"▫️ <b>Noktasal Trend:</b> {nokta_renk}"
+        f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
+        f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
+        f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
+        f"▫️ <b>4 Saat (4h):</b> {ss_4h_k} Kanal | {ss_4h_n} Nokta"
         f"{sr_metni}"
     )
 
 def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
-    """Sadece planlanan saatteki ilgili periyotları analiz eder."""
+    """Sadece planlanan saatteki ilgili periyotları canlı mumda analiz eder."""
     signals = []
     df_1h = None
+    df_4h = None
+    df_15m = None
     
-    if scan_1h or scan_4h:
-        try:
-            df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
-        except Exception:
-            pass
+    # 1. SlingShot Multi-TF verilerini hazırla
+    try:
+        df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
+        clean_1h = clean_df(df_1h)
+        df_4h = make_bist_4h(clean_1h)
+        df_15m = yf.download(symbol, period="5d", interval="15m", progress=False)
+        clean_15m = clean_df(df_15m)
+
+        ss_multi = {
+            "15m": calculate_slingshot(clean_15m, -1),
+            "1h": calculate_slingshot(clean_1h, -1),
+            "4h": calculate_slingshot(df_4h, -1)
+        }
+    except Exception:
+        ss_multi = {"15m": ("Belirsiz", "Belirsiz"), "1h": ("Belirsiz", "Belirsiz"), "4h": ("Belirsiz", "Belirsiz")}
 
     # 1. 1 Saatlik Tarama
     if scan_1h and df_1h is not None and not df_1h.empty:
         try:
-            s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)")
+            s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)", ss_multi)
             if s1h:
                 signals.append(s1h)
         except Exception:
             pass
 
     # 2. 4 Saatlik Tarama (SADECE 12:30 ve 17:30)
-    if scan_4h and df_1h is not None and not df_1h.empty:
+    if scan_4h and df_4h is not None and not df_4h.empty:
         try:
-            df_4h = make_bist_4h(df_1h)
-            s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)")
+            s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)", ss_multi)
             if s4h:
                 signals.append(s4h)
         except Exception:
@@ -432,7 +397,7 @@ def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
     if scan_1d:
         try:
             df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
-            s1d = evaluate_eco(df_1d, symbol, "Günlük (1D)")
+            s1d = evaluate_eco(df_1d, symbol, "Günlük (1D)", ss_multi)
             if s1d:
                 signals.append(s1d)
         except Exception:
@@ -445,23 +410,17 @@ def determine_scan_modes(now_tsi):
     h = now_tsi.hour
     m = now_tsi.minute
     
-    # Seans dışı (18:15 sonrası veya 09:30 öncesi) kesinlikle çalışmaz
     if h >= 19 or h < 9 or (h == 9 and m < 45):
         return False, False, False
 
-    # 1. 4 Saatlik Tarama: SADECE saat 12:30 ve 17:30 civarında (dakika 15 ile 35 arası)
     scan_4h = (h == 12 and 15 <= m <= 35) or (h == 17 and 15 <= m <= 35)
-
-    # 2. Günlük Tarama: SADECE saat 17:30 civarında (dakika 15 ile 35 arası)
     scan_1d = (h == 17 and 15 <= m <= 35)
-
-    # 3. Saatlik Tarama: 12:30 ve 17:30 DIŞINDAKİ tüm seans taramalarında SADECE 1 Saatlik çalışır!
     scan_1h = not (scan_4h or scan_1d)
 
     return scan_1h, scan_4h, scan_1d
 
 def main():
-    now_tsi = pd.Timestamp.utcnow().tz_localize(None) + pd.Timedelta(hours=3)
+    now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
     scan_1h, scan_4h, scan_1d = determine_scan_modes(now_tsi)
     
     if not scan_1h and not scan_4h and not scan_1d:
@@ -473,7 +432,7 @@ def main():
     if scan_4h: aktif_modlar.append("4 Saatlik")
     if scan_1d: aktif_modlar.append("Günlük")
     
-    print(f"BIST Taraması Başlıyor (Saat: {now_tsi.strftime('%H:%M')} TSİ) -> Aktif Modlar: {', '.join(aktif_modlar)} ({len(BIST_TICKERS)} Hisse)...")
+    print(f"BIST 100 Taraması Başlıyor (Saat: {now_tsi.strftime('%H:%M')} TSİ) -> Aktif Modlar: {', '.join(aktif_modlar)} ({len(BIST_TICKERS)} Hisse)...")
     all_signals = []
 
     with ThreadPoolExecutor(max_workers=20) as executor:
@@ -486,7 +445,6 @@ def main():
             except Exception as e:
                 print(f"Hisse analiz hatası: {e}")
 
-    # Sinyaller Telegram flood limitine takılmadan 1.5 saniye arayla güvenle gönderilir
     toplam = 0
     for i, sig in enumerate(all_signals):
         success = send_telegram(sig)
