@@ -119,42 +119,86 @@ def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
     except Exception:
         return "Belirsiz", "Belirsiz"
 
-def detect_trend_breakout(df: pd.DataFrame) -> str:
-    """Canlı mumun düşen veya yükselen trend çizgisini kırıp kırmadığını kontrol eder."""
-    if df is None or len(df) < 25:
-        return "Standart Hareket"
+def detect_diagonal_trendline_and_initiation(df: pd.DataFrame, lookback: int = 45):
+    """
+    Görseldeki gibi:
+    1. Tepeleri birleştiren eğimli düşen direnç çizgisini (y = mx + b) ve kırılımını hesaplar.
+    2. En dip noktadan sonra oluşan Yükselen Dipleri (Higher Lows) ve yeni trend başlangıcını doğrular.
+    """
+    if df is None or len(df) < 20:
+        return "Standart Hareket", "Yeni Trend Yok"
     try:
-        high = df['High'].values
-        low = df['Low'].values
-        close = df['Close'].values
+        window = min(lookback, len(df))
+        sub_h = df['High'].values[-window:]
+        sub_l = df['Low'].values[-window:]
+        sub_c = df['Close'].values[-window:]
+        curr_c = sub_c[-1]
+        curr_h = sub_h[-1]
 
-        prev_highs = high[-16:-1]
-        prev_lows = low[-16:-1]
-        curr_c = close[-1]
-        curr_h = high[-1]
-        curr_l = low[-1]
+        # 1. DÜŞEN TREND ÇİZGİSİ HESABI
+        peak_indices = []
+        k = 2
+        for i in range(k, window - k):
+            if all(sub_h[i] >= sub_h[i-j] for j in range(1, k+1)) and all(sub_h[i] >= sub_h[i+j] for j in range(1, k+1)):
+                peak_indices.append(i)
 
-        peak_old = np.max(prev_highs[:8])
-        peak_recent = np.max(prev_highs[8:])
+        dusen_kirilim_durumu = "Düşen Trend Tespit Edilmedi"
+        trend_baslatma_durumu = "Yeni Trend Başlamadı"
 
-        if peak_old > peak_recent:
-            if curr_c > peak_recent:
-                return "✅ Düşen Trend Yukarı Kırıldı (Breakout) (Boğa)"
-            elif curr_h >= peak_recent and curr_c <= peak_recent:
-                return "⚠️ Düşen Trend Direnci Test Ediliyor (Boğa)"
+        if len(peak_indices) >= 2:
+            sorted_peaks = sorted(peak_indices, key=lambda idx: sub_h[idx], reverse=True)
+            p1 = sorted_peaks[0]
+            candidates = [p for p in peak_indices if p > p1 and sub_h[p] < sub_h[p1]]
+            if candidates:
+                p2 = candidates[0]
+                slope = (sub_h[p2] - sub_h[p1]) / (p2 - p1)
+                intercept = sub_h[p1] - slope * p1
 
-        trough_old = np.min(prev_lows[:8])
-        trough_recent = np.min(prev_lows[8:])
+                line_val_now = slope * (window - 1) + intercept
+                line_val_prev = slope * (window - 2) + intercept
 
-        if trough_old < trough_recent:
-            if curr_c < trough_recent:
-                return "🔻 Yükselen Trend Aşağı Kırıldı (Breakdown) (Ayı)"
-            elif curr_l <= trough_recent and curr_c >= trough_recent:
-                return "⚠️ Yükselen Trend Desteği Test Ediliyor (Ayı)"
+                if curr_c > line_val_now:
+                    if sub_c[-2] <= line_val_prev or (curr_c - line_val_now) / line_val_now <= 0.04:
+                        dusen_kirilim_durumu = f"✅ Düşen Trend Çizgisi Yukarı Kırıldı! (Trend: ${line_val_now:,.2f}) (Boğa)"
+                    else:
+                        dusen_kirilim_durumu = f"🚀 Düşen Trend Üzerinde Seyrediyor (Trend: ${line_val_now:,.2f}) (Boğa)"
+                elif curr_h >= line_val_now and curr_c <= line_val_now:
+                    dusen_kirilim_durumu = f"⚠️ Düşen Trend Çizgisi Test Ediliyor (Direnç: ${line_val_now:,.2f}) (Nötr)"
+                else:
+                    dusen_kirilim_durumu = f"Düşen Trend Altında (Direnç: ${line_val_now:,.2f})"
 
-        return "Standart Kanal İçi Hareket"
+        # 2. YENİ YÜKSELEN TREND BAŞLATTI MI? (Higher Lows & Dipten Yükselen Çizgi)
+        lowest_idx = np.argmin(sub_l[:-2])
+        lowest_val = sub_l[lowest_idx]
+
+        if lowest_idx < window - 4:
+            after_troughs = []
+            for i in range(lowest_idx + 2, window - 1):
+                if sub_l[i] <= sub_l[i-1] and sub_l[i] <= sub_l[i+1]:
+                    after_troughs.append(i)
+
+            if after_troughs:
+                second_low_idx = after_troughs[-1]
+                second_low_val = sub_l[second_low_idx]
+
+                if second_low_val > lowest_val:
+                    up_slope = (second_low_val - lowest_val) / (second_low_idx - lowest_idx)
+                    up_intercept = lowest_val - up_slope * lowest_idx
+                    up_line_now = up_slope * (window - 1) + up_intercept
+
+                    if curr_c >= up_line_now:
+                        trend_baslatma_durumu = f"📈 Yeni Yükselen Trend Başlattı! (Dipten Destek: ${up_line_now:,.2f}, Yükselen Dip Onaylı) (Boğa)"
+                    else:
+                        trend_baslatma_durumu = "Yükselen Trend Desteği Altında (Nötr)"
+                else:
+                    trend_baslatma_durumu = "Düşük Dipler Devam Ediyor"
+            else:
+                if curr_c > lowest_val * 1.03:
+                    trend_baslatma_durumu = "⚡ Dipten Hızlı Toparlanma (V Dönüş Başlangıcı) (Boğa)"
+
+        return dusen_kirilim_durumu, trend_baslatma_durumu
     except Exception:
-        return "Standart Hareket"
+        return "Standart Hareket", "Yeni Trend Yok"
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> str:
     """15+ Gelişmiş Mum Formasyonu Tanıma Motoru (Boğa / Ayı Açıklamalı)."""
@@ -179,45 +223,45 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         lower_wick = np.minimum(o, c) - l
 
         # 1. THREE LINE STRIKE
-        if (is_bear and is_bear[2] and is_bear[3] and is_bull[4] and 
-            c[3] < c[2] < c and o[4] <= c[3] and c[4] >= o):
+        if (is_bear and is_bear and is_bear[3] and is_bull[4] and 
+            c[3] < c < c and o[4] <= c[3] and c[4] >= o):
             return "⚔️ Three Line Strike (Boğa)"
-        if (is_bull and is_bull[2] and is_bull[3] and is_bear[4] and 
-            c[3] > c[2] > c and o[4] >= c[3] and c[4] <= o):
+        if (is_bull and is_bull and is_bull[3] and is_bear[4] and 
+            c[3] > c > c and o[4] >= c[3] and c[4] <= o):
             return "⚔️ Three Line Strike (Ayı)"
 
         # 2. THREE BLACK CROWS (Üç Kara Karga)
-        if (is_bear[2] and is_bear[3] and is_bear[4] and 
-            c[4] < c[3] < c[2] and 
-            o[3] < o[2] and o[4] < o[3] and
-            lower_wick[2]/cr[2] < 0.25 and lower_wick[3]/cr[3] < 0.25 and lower_wick[4]/cr[4] < 0.25):
+        if (is_bear and is_bear[3] and is_bear[4] and 
+            c[4] < c[3] < c and 
+            o[3] < o and o[4] < o[3] and
+            lower_wick/cr < 0.25 and lower_wick[3]/cr[3] < 0.25 and lower_wick[4]/cr[4] < 0.25):
             return "🦅 Üç Kara Karga - Three Black Crows (Ayı)"
 
         # 3. THREE WHITE SOLDIERS (Üç Beyaz Asker)
-        if (is_bull[2] and is_bull[3] and is_bull[4] and 
-            c[4] > c[3] > c[2] and 
-            o[3] > o[2] and o[4] > o[3] and
-            upper_wick[2]/cr[2] < 0.25 and upper_wick[3]/cr[3] < 0.25 and upper_wick[4]/cr[4] < 0.25):
+        if (is_bull and is_bull[3] and is_bull[4] and 
+            c[4] > c[3] > c and 
+            o[3] > o and o[4] > o[3] and
+            upper_wick/cr < 0.25 and upper_wick[3]/cr[3] < 0.25 and upper_wick[4]/cr[4] < 0.25):
             return "🛡️ Üç Beyaz Asker - Three White Soldiers (Boğa)"
 
         # 4. ABANDONED BABY (Terk Edilmiş Bebek)
-        if (is_bear[2] and body[3]/cr[3] < 0.15 and is_bull[4] and 
-            h[3] < l[2] and l[4] > h[3] and c[4] > (o[2] + c[2])/2):
+        if (is_bear and body[3]/cr[3] < 0.15 and is_bull[4] and 
+            h[3] < l and l[4] > h[3] and c[4] > (o + c)/2):
             return "👶 Terk Edilmiş Bebek - Abandoned Baby (Boğa)"
-        if (is_bull[2] and body[3]/cr[3] < 0.15 and is_bear[4] and 
-            l[3] > h[2] and h[4] < l[3] and c[4] < (o[2] + c[2])/2):
+        if (is_bull and body[3]/cr[3] < 0.15 and is_bear[4] and 
+            l[3] > h and h[4] < l[3] and c[4] < (o + c)/2):
             return "👶 Terk Edilmiş Bebek - Abandoned Baby (Ayı)"
 
         # 5. MAT HOLD (Boğa)
-        if (is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l, l[2], l[3]) >= l[0]):
+        if (is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l, l, l[3]) >= l[0]):
             return "🧱 Mat Hold (Boğa)"
 
         # 6. MORNING STAR (Sabah Yıldızı)
-        if (is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2):
+        if (is_bear and body/cr > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o + c)/2):
             return "⭐ Sabah Yıldızı - Morning Star (Boğa)"
 
         # 7. EVENING STAR (Akşam Yıldızı)
-        if (is_bull[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o[2] + c[2])/2):
+        if (is_bull and body/cr > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o + c)/2):
             return "🌙 Akşam Yıldızı - Evening Star (Ayı)"
 
         # 8. ENGULFING (Yutan Boğa / Ayı)
@@ -364,7 +408,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
     except Exception:
         return None, None, 0.0, 0.0
 
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, trend_brk: str):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str):
     """Göreceli Hacim (RVol) ve 1-5 Yıldız Sinyal Güven Puanı hesabı."""
     try:
         vol = df['Volume'].squeeze()
@@ -395,7 +439,7 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
             puan += 1
         if rvol >= 1.1:
             puan += 1
-        if ("Boğa" in candle_pat and sig_type == "BUY") or ("Ayı" in candle_pat and sig_type == "SELL") or ("Kırıldı" in trend_brk):
+        if ("Boğa" in candle_pat and sig_type == "BUY") or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend):
             puan += 1
 
         puan = min(puan, 5)
@@ -473,13 +517,13 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     time_str = candle_time.strftime('%H:%M')
     tv_link = f"https://tr.tradingview.com/chart/?symbol={symbol}"
 
-    # Price Action ve Mum Formasyonu Teyitleri
-    trend_brk = detect_trend_breakout(df)
+    # Geometrik Trend Çizgileri ve Formasyon Teyitleri
+    dusen_trend, yeni_trend = detect_diagonal_trendline_and_initiation(df)
     candle_pat = detect_candlestick_patterns(df)
     smc_model = detect_ict_smc_models(df)
 
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, trend_brk)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend)
 
     ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
     ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
@@ -507,8 +551,9 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
         f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
         f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
         f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
-        f"<b>🕯️ Formasyon & Price Action Teyitleri:</b>\n"
-        f"▫️ <b>Düşen Kırılımı:</b> {trend_brk}\n"
+        f"<b>🕯️ Formasyon & Trend Teyitleri:</b>\n"
+        f"▫️ <b>Düşen Trend Kırılımı:</b> {dusen_trend}\n"
+        f"▫️ <b>Trend Başlatma Durumu:</b> {yeni_trend}\n"
         f"▫️ <b>Mum Formasyonu:</b> {candle_pat}\n"
         f"▫️ <b>ICT / SMC Modeli:</b> {smc_model}\n\n"
         f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
