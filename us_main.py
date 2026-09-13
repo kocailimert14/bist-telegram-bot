@@ -119,6 +119,202 @@ def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
     except Exception:
         return "Belirsiz", "Belirsiz"
 
+def detect_trend_breakout(df: pd.DataFrame) -> str:
+    """Canlı mumun düşen veya yükselen trend çizgisini kırıp kırmadığını kontrol eder."""
+    if df is None or len(df) < 25:
+        return "Standart Hareket"
+    try:
+        high = df['High'].values
+        low = df['Low'].values
+        close = df['Close'].values
+
+        prev_highs = high[-16:-1]
+        prev_lows = low[-16:-1]
+        curr_c = close[-1]
+        curr_h = high[-1]
+        curr_l = low[-1]
+
+        peak_old = np.max(prev_highs[:8])
+        peak_recent = np.max(prev_highs[8:])
+
+        if peak_old > peak_recent:
+            if curr_c > peak_recent:
+                return "✅ Düşen Trend Yukarı Kırıldı (Breakout) (Boğa)"
+            elif curr_h >= peak_recent and curr_c <= peak_recent:
+                return "⚠️ Düşen Trend Direnci Test Ediliyor (Boğa)"
+
+        trough_old = np.min(prev_lows[:8])
+        trough_recent = np.min(prev_lows[8:])
+
+        if trough_old < trough_recent:
+            if curr_c < trough_recent:
+                return "🔻 Yükselen Trend Aşağı Kırıldı (Breakdown) (Ayı)"
+            elif curr_l <= trough_recent and curr_c >= trough_recent:
+                return "⚠️ Yükselen Trend Desteği Test Ediliyor (Ayı)"
+
+        return "Standart Kanal İçi Hareket"
+    except Exception:
+        return "Standart Hareket"
+
+def detect_candlestick_patterns(df: pd.DataFrame) -> str:
+    """15+ Gelişmiş Mum Formasyonu Tanıma Motoru (Boğa / Ayı Açıklamalı)."""
+    if df is None or len(df) < 5:
+        return "Standart Mum"
+    try:
+        sub = df.iloc[-5:]
+        o = sub['Open'].values
+        h = sub['High'].values
+        l = sub['Low'].values
+        c = sub['Close'].values
+
+        body = np.abs(c - o)
+        candle_range = h - l
+        is_bull = c > o
+        is_bear = c < o
+
+        eps = 1e-10
+        cr = np.where(candle_range == 0, eps, candle_range)
+
+        upper_wick = h - np.maximum(o, c)
+        lower_wick = np.minimum(o, c) - l
+
+        # 1. THREE LINE STRIKE
+        if (is_bear and is_bear[2] and is_bear[3] and is_bull[4] and 
+            c[3] < c[2] < c and o[4] <= c[3] and c[4] >= o):
+            return "⚔️ Three Line Strike (Boğa)"
+        if (is_bull and is_bull[2] and is_bull[3] and is_bear[4] and 
+            c[3] > c[2] > c and o[4] >= c[3] and c[4] <= o):
+            return "⚔️ Three Line Strike (Ayı)"
+
+        # 2. THREE BLACK CROWS (Üç Kara Karga)
+        if (is_bear[2] and is_bear[3] and is_bear[4] and 
+            c[4] < c[3] < c[2] and 
+            o[3] < o[2] and o[4] < o[3] and
+            lower_wick[2]/cr[2] < 0.25 and lower_wick[3]/cr[3] < 0.25 and lower_wick[4]/cr[4] < 0.25):
+            return "🦅 Üç Kara Karga - Three Black Crows (Ayı)"
+
+        # 3. THREE WHITE SOLDIERS (Üç Beyaz Asker)
+        if (is_bull[2] and is_bull[3] and is_bull[4] and 
+            c[4] > c[3] > c[2] and 
+            o[3] > o[2] and o[4] > o[3] and
+            upper_wick[2]/cr[2] < 0.25 and upper_wick[3]/cr[3] < 0.25 and upper_wick[4]/cr[4] < 0.25):
+            return "🛡️ Üç Beyaz Asker - Three White Soldiers (Boğa)"
+
+        # 4. ABANDONED BABY (Terk Edilmiş Bebek)
+        if (is_bear[2] and body[3]/cr[3] < 0.15 and is_bull[4] and 
+            h[3] < l[2] and l[4] > h[3] and c[4] > (o[2] + c[2])/2):
+            return "👶 Terk Edilmiş Bebek - Abandoned Baby (Boğa)"
+        if (is_bull[2] and body[3]/cr[3] < 0.15 and is_bear[4] and 
+            l[3] > h[2] and h[4] < l[3] and c[4] < (o[2] + c[2])/2):
+            return "👶 Terk Edilmiş Bebek - Abandoned Baby (Ayı)"
+
+        # 5. MAT HOLD (Boğa)
+        if (is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l, l[2], l[3]) >= l[0]):
+            return "🧱 Mat Hold (Boğa)"
+
+        # 6. MORNING STAR (Sabah Yıldızı)
+        if (is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2):
+            return "⭐ Sabah Yıldızı - Morning Star (Boğa)"
+
+        # 7. EVENING STAR (Akşam Yıldızı)
+        if (is_bull[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o[2] + c[2])/2):
+            return "🌙 Akşam Yıldızı - Evening Star (Ayı)"
+
+        # 8. ENGULFING (Yutan Boğa / Ayı)
+        if is_bear[3] and is_bull[4] and o[4] <= c[3] and c[4] >= o[3]:
+            return "🟢 Yutan Boğa - Bullish Engulfing (Boğa)"
+        if is_bull[3] and is_bear[4] and o[4] >= c[3] and c[4] <= o[3]:
+            return "🔴 Yutan Ayı - Bearish Engulfing (Ayı)"
+
+        # 9. PIERCING LINE / DARK CLOUD
+        if is_bear[3] and is_bull[4] and o[4] < l[3] and c[4] > (o[3] + c[3])/2 and c[4] < o[3]:
+            return "⚡ Delen Çizgi - Piercing Line (Boğa)"
+        if is_bull[3] and is_bear[4] and o[4] > h[3] and c[4] < (o[3] + c[3])/2 and c[4] > o[3]:
+            return "☁️ Kara Bulut Örtüsü - Dark Cloud (Ayı)"
+
+        # 10. TEK MUMLU FORMASYONLAR (Canlı Mum)
+        c_b = body[4]
+        c_cr = cr[4]
+        c_lw = lower_wick[4]
+        c_uw = upper_wick[4]
+
+        if c_lw >= 2 * c_b and c_uw <= 0.25 * c_b and c_b > 0:
+            return "🔨 Çekiç - Hammer / Pinbar (Boğa)"
+        if c_uw >= 2 * c_b and c_lw <= 0.25 * c_b and is_bull[4] and c_b > 0:
+            return "🪓 Ters Çekiç - Inverted Hammer (Boğa)"
+        if c_uw >= 2 * c_b and c_lw <= 0.25 * c_b and is_bear[4] and c_b > 0:
+            return "🌠 Kayan Yıldız - Shooting Star (Ayı)"
+        if c_lw >= 2 * c_b and c_uw <= 0.25 * c_b and is_bear[4] and c_b > 0:
+            return "🪢 Asılı Adam - Hanging Man (Ayı)"
+
+        if c_b / c_cr < 0.1:
+            if c_lw >= 2 * c_uw:
+                return "🦗 Yusufçuk Doji - Dragonfly (Boğa)"
+            elif c_uw >= 2 * c_lw:
+                return "🪦 Mezar Taşı Doji - Gravestone (Ayı)"
+            else:
+                return "⚖️ Nötr Doji (Kararsız)"
+
+        if c_b / c_cr >= 0.85:
+            return "🚀 Güçlü Boğa Marubozu (Boğa)" if is_bull[4] else "🩸 Güçlü Ayı Marubozu (Ayı)"
+
+        return "Standart Mum"
+    except Exception:
+        return "Standart Mum"
+
+def detect_ict_smc_models(df: pd.DataFrame) -> str:
+    """Pinkman Akademi - 12 Kurulum (ICT & Price Action) Tanıma Motoru."""
+    if df is None or len(df) < 25:
+        return "Belirsiz"
+    try:
+        high = df['High'].values
+        low = df['Low'].values
+        close = df['Close'].values
+        opens = df['Open'].values
+
+        curr_c = close[-1]
+        curr_h = high[-1]
+        curr_l = low[-1]
+
+        # 1. LIQUIDITY SWEEP / TURTLE SOUP (Model 2 & 10)
+        swing_low = np.min(low[-16:-2])
+        if (low[-2] < swing_low and close[-2] > swing_low) or (curr_l < swing_low and curr_c > swing_low):
+            return "🧲 Liquidity Sweep / Turtle Soup (Tuzak Dip Temizlendi) (Boğa)"
+
+        swing_high = np.max(high[-16:-2])
+        if (high[-2] > swing_high and close[-2] < swing_high) or (curr_h > swing_high and curr_c < swing_high):
+            return "🧲 Buy-Side Liquidity Sweep (Tepe Likiditesi Alındı) (Ayı)"
+
+        # 2. FVG - FAIR VALUE GAP (Model 4 & 5)
+        if low[-2] > high[-4]:
+            if high[-4] <= curr_l <= low[-2] or high[-4] <= curr_c <= low[-2]:
+                return "⚡ Bullish FVG (Dengesizlik Boşluğu Test Ediliyor) (Boğa)"
+        if high[-2] < low[-4]:
+            if high[-2] <= curr_h <= low[-4] or high[-2] <= curr_c <= low[-4]:
+                return "⚡ Bearish FVG (Satış Dengesizliği Test Ediliyor) (Ayı)"
+
+        # 3. ORDER BLOCK & BREAKER (Model 3 & 6)
+        for i in range(2, 6):
+            if close[-i] > opens[-i] and (close[-i] - opens[-i]) > np.std(np.abs(close - opens)) * 1.5:
+                ob_idx = -(i + 1)
+                if low[ob_idx] <= curr_l <= high[ob_idx] or low[ob_idx] <= curr_c <= high[ob_idx]:
+                    return "🧱 Bullish Order Block (OB Kurumsal Alım Bölgesi) (Boğa)"
+                    break
+
+        # 4. OTE - OPTIMAL TRADE ENTRY (%62-%79 FIBONACCI) (Model 9)
+        recent_min = np.min(low[-20:])
+        recent_max = np.max(high[-20:])
+        rng = recent_max - recent_min
+        if rng > 0:
+            fib_62 = recent_max - rng * 0.62
+            fib_79 = recent_max - rng * 0.79
+            if fib_79 <= curr_c <= fib_62:
+                return "🎯 OTE (%62 - %79 Optimal Giriş Bölgesi) (Boğa)"
+
+        return "Normal Fiyat Yapısı"
+    except Exception:
+        return "Normal Fiyat Yapısı"
+
 def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min_dist_pct: float = 0.6):
     """Kuvvetli Majör Destek & Direnç Seviyeleri (Mikro %0.1 gürültüleri eler)."""
     try:
@@ -168,7 +364,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
     except Exception:
         return None, None, 0.0, 0.0
 
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, trend_brk: str):
     """Göreceli Hacim (RVol) ve 1-5 Yıldız Sinyal Güven Puanı hesabı."""
     try:
         vol = df['Volume'].squeeze()
@@ -199,11 +395,10 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
             puan += 1
         if rvol >= 1.1:
             puan += 1
-        if sig_type == "BUY" and abs(d_res) >= 0.50:
-            puan += 1
-        elif sig_type == "SELL" and abs(d_sup) >= 0.50:
+        if ("Boğa" in candle_pat and sig_type == "BUY") or ("Ayı" in candle_pat and sig_type == "SELL") or ("Kırıldı" in trend_brk):
             puan += 1
 
+        puan = min(puan, 5)
         yildizlar = "⭐" * puan
         skor_metni = f"{yildizlar} ({puan}/5)"
         return hacim_metni, skor_metni
@@ -251,7 +446,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
     # SADECE O AN AÇIK OLAN CANLI MUM KONTROL EDİLİR
-    c_prev = float(stoch.iloc[-2]) # Stoch[1]
+    c_prev = float(stoch.iloc[-2]) # Stoch
     c_curr = float(stoch.iloc[-1]) # Stoch (Canlı Mum)
 
     sig_type = None
@@ -278,8 +473,13 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     time_str = candle_time.strftime('%H:%M')
     tv_link = f"https://tr.tradingview.com/chart/?symbol={symbol}"
 
+    # Price Action ve Mum Formasyonu Teyitleri
+    trend_brk = detect_trend_breakout(df)
+    candle_pat = detect_candlestick_patterns(df)
+    smc_model = detect_ict_smc_models(df)
+
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, trend_brk)
 
     ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
     ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
@@ -307,6 +507,10 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
         f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
         f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
         f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
+        f"<b>🕯️ Formasyon & Price Action Teyitleri:</b>\n"
+        f"▫️ <b>Düşen Kırılımı:</b> {trend_brk}\n"
+        f"▫️ <b>Mum Formasyonu:</b> {candle_pat}\n"
+        f"▫️ <b>ICT / SMC Modeli:</b> {smc_model}\n\n"
         f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
         f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
         f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
@@ -318,7 +522,6 @@ def scan_ticker(symbol: str):
     """Tek bir hisse için 15m, 1h ve 4h SlingShot teyitlerini hesaplayıp canlı mumu tarar."""
     signals = []
     try:
-        # Multi-Timeframe verilerini çek
         df_15m = yf.download(symbol, period="5d", interval="15m", progress=False)
         clean_15m = clean_df(df_15m)
         df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
@@ -326,7 +529,6 @@ def scan_ticker(symbol: str):
         df_30m = yf.download(symbol, period="1mo", interval="30m", progress=False)
         clean_30m = clean_df(df_30m)
 
-        # 4 Saatlik mumu oluştur
         df_4h = clean_1h.resample("4h").agg({
             'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
         }).dropna()
