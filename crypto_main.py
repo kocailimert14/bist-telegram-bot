@@ -117,10 +117,8 @@ def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
         ma1 = close.ewm(span=13, adjust=False).mean()
         ma2 = close.ewm(span=21, adjust=False).mean()
         ma3 = close.ewm(span=34, adjust=False).mean()
-
         ma = close.ewm(span=89, adjust=False).mean()
         rangema = tr.ewm(span=89, adjust=False).mean()
-
         upper = ma + rangema * 0.5
         lower = ma - rangema * 0.5
 
@@ -139,7 +137,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
 
         if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
             nokta_renk = "🟢 Yeşil"
-        elif (v_ma1 < v_ma2) and (v_ma2 < v_ma3):
+        elif (v_ma1 < v_lower if False else v_ma2 < v_ma3):
             nokta_renk = "🔴 Kırmızı"
         else:
             nokta_renk = "🟡 Sarı"
@@ -148,38 +146,79 @@ def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
     except Exception:
         return "Belirsiz", "Belirsiz"
 
-def detect_trend_breakout(df: pd.DataFrame) -> str:
-    if df is None or len(df) < 25:
-        return "Standart Hareket"
+def detect_diagonal_trendline_and_initiation(df: pd.DataFrame, lookback: int = 45):
+    if df is None or len(df) < 20:
+        return "Standart Hareket", "Yeni Trend Yok"
     try:
-        high = df['High'].values
-        low = df['Low'].values
-        close = df['Close'].values
-        prev_highs = high[-16:-1]
-        prev_lows = low[-16:-1]
-        curr_c = close[-1]
-        curr_h = high[-1]
-        curr_l = low[-1]
+        window = min(lookback, len(df))
+        sub_h = df['High'].values[-window:]
+        sub_l = df['Low'].values[-window:]
+        sub_c = df['Close'].values[-window:]
+        curr_c = sub_c[-1]
+        curr_h = sub_h[-1]
 
-        peak_old = np.max(prev_highs[:8])
-        peak_recent = np.max(prev_highs[8:])
-        if peak_old > peak_recent:
-            if curr_c > peak_recent:
-                return "✅ Düşen Trend Yukarı Kırıldı (Breakout) (Boğa)"
-            elif curr_h >= peak_recent and curr_c <= peak_recent:
-                return "⚠️ Düşen Trend Direnci Test Ediliyor (Boğa)"
+        peak_indices = []
+        k = 2
+        for i in range(k, window - k):
+            if all(sub_h[i] >= sub_h[i-j] for j in range(1, k+1)) and all(sub_h[i] >= sub_h[i+j] for j in range(1, k+1)):
+                peak_indices.append(i)
 
-        trough_old = np.min(prev_lows[:8])
-        trough_recent = np.min(prev_lows[8:])
-        if trough_old < trough_recent:
-            if curr_c < trough_recent:
-                return "🔻 Yükselen Trend Aşağı Kırıldı (Breakdown) (Ayı)"
-            elif curr_l <= trough_recent and curr_c >= trough_recent:
-                return "⚠️ Yükselen Trend Desteği Test Ediliyor (Ayı)"
+        dusen_kirilim_durumu = "Düşen Trend Tespit Edilmedi"
+        trend_baslatma_durumu = "Yeni Trend Başlamadı"
 
-        return "Standart Kanal İçi Hareket"
+        if len(peak_indices) >= 2:
+            sorted_peaks = sorted(peak_indices, key=lambda idx: sub_h[idx], reverse=True)
+            p1 = sorted_peaks[0]
+            candidates = [p for p in peak_indices if p > p1 and sub_h[p] < sub_h[p1]]
+            if candidates:
+                p2 = candidates[0]
+                slope = (sub_h[p2] - sub_h[p1]) / (p2 - p1)
+                intercept = sub_h[p1] - slope * p1
+
+                line_val_now = slope * (window - 1) + intercept
+                line_val_prev = slope * (window - 2) + intercept
+
+                if curr_c > line_val_now:
+                    if sub_c[-2] <= line_val_prev or (curr_c - line_val_now) / line_val_now <= 0.04:
+                        dusen_kirilim_durumu = f"✅ Düşen Trend Çizgisi Yukarı Kırıldı! (Trend: ${line_val_now:,.2f}) (Boğa)"
+                    else:
+                        dusen_kirilim_durumu = f"🚀 Düşen Trend Üzerinde Seyrediyor (Trend: ${line_val_now:,.2f}) (Boğa)"
+                elif curr_h >= line_val_now and curr_c <= line_val_now:
+                    dusen_kirilim_durumu = f"⚠️ Düşen Trend Çizgisi Test Ediliyor (Direnç: ${line_val_now:,.2f}) (Nötr)"
+                else:
+                    dusen_kirilim_durumu = f"Düşen Trend Altında (Direnç: ${line_val_now:,.2f})"
+
+        lowest_idx = np.argmin(sub_l[:-2])
+        lowest_val = sub_l[lowest_idx]
+
+        if lowest_idx < window - 4:
+            after_troughs = []
+            for i in range(lowest_idx + 2, window - 1):
+                if sub_l[i] <= sub_l[i-1] and sub_l[i] <= sub_l[i+1]:
+                    after_troughs.append(i)
+
+            if after_troughs:
+                second_low_idx = after_troughs[-1]
+                second_low_val = sub_l[second_low_idx]
+
+                if second_low_val > lowest_val:
+                    up_slope = (second_low_val - lowest_val) / (second_low_idx - lowest_idx)
+                    up_intercept = lowest_val - up_slope * lowest_idx
+                    up_line_now = up_slope * (window - 1) + up_intercept
+
+                    if curr_c >= up_line_now:
+                        trend_baslatma_durumu = f"📈 Yeni Yükselen Trend Başlattı! (Dipten Destek: ${up_line_now:,.2f}, Yükselen Dip Onaylı) (Boğa)"
+                    else:
+                        trend_baslatma_durumu = "Yükselen Trend Desteği Altında (Nötr)"
+                else:
+                    trend_baslatma_durumu = "Düşük Dipler Devam Ediyor"
+            else:
+                if curr_c > lowest_val * 1.03:
+                    trend_baslatma_durumu = "⚡ Dipten Hızlı Toparlanma (V Dönüş Başlangıcı) (Boğa)"
+
+        return dusen_kirilim_durumu, trend_baslatma_durumu
     except Exception:
-        return "Standart Hareket"
+        return "Standart Hareket", "Yeni Trend Yok"
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> str:
     if df is None or len(df) < 5:
@@ -342,7 +381,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
     except Exception:
         return None, None, 0.0, 0.0
 
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, trend_brk: str):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str):
     try:
         vol = df['Volume'].squeeze()
         curr_vol = float(vol.iloc[idx])
@@ -351,8 +390,9 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
             avg_vol = float(vol.iloc[-window-1:-1].mean())
         else:
             avg_vol = float(vol.mean())
+            
         rvol = curr_vol / avg_vol if avg_vol > 0 else 1.0
-
+        
         if rvol >= 1.5:
             hacim_metni = f"🚀 Çok Güçlü (Ortalamanın {rvol:.1f}x Katı)"
         elif rvol >= 1.1:
@@ -371,8 +411,12 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
             puan += 1
         if rvol >= 1.1:
             puan += 1
-        if ("Boğa" in candle_pat and sig_type == "BUY") or ("Ayı" in candle_pat and sig_type == "SELL") or ("Kırıldı" in trend_brk):
-            puan += 1
+        if sig_type == "BUY":
+            if ("Boğa" in candle_pat) or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend):
+                puan += 1
+        else:
+            if ("Ayı" in candle_pat) or ("Aşağı Kırıldı" in dusen_trend) or ("Düşük Dipler" in yeni_trend):
+                puan += 1
 
         puan = min(puan, 5)
         yildizlar = "⭐" * puan
@@ -433,12 +477,12 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
     coin_name = symbol.replace("USDT", "")
     tv_link = f"https://tr.tradingview.com/chart/?symbol=BINANCE:{coin_name}USDT"
 
-    trend_brk = detect_trend_breakout(df)
+    dusen_trend, yeni_trend = detect_diagonal_trendline_and_initiation(df)
     candle_pat = detect_candlestick_patterns(df)
     smc_model = detect_ict_smc_models(df)
 
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, trend_brk)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend)
 
     ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
     ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
@@ -466,8 +510,9 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
         f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
         f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
         f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
-        f"<b>🕯️ Formasyon & Price Action Teyitleri:</b>\n"
-        f"▫️ <b>Düşen Kırılımı:</b> {trend_brk}\n"
+        f"<b>🕯️ Formasyon & Trend Teyitleri:</b>\n"
+        f"▫️ <b>Düşen Trend Kırılımı:</b> {dusen_trend}\n"
+        f"▫️ <b>Trend Başlatma Durumu:</b> {yeni_trend}\n"
         f"▫️ <b>Mum Formasyonu:</b> {candle_pat}\n"
         f"▫️ <b>ICT / SMC Modeli:</b> {smc_model}\n\n"
         f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
@@ -519,3 +564,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
