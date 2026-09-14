@@ -227,6 +227,8 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         range3 = max(h3 - l3, 1e-10)
         body2 = abs(c2 - o2)
         range2 = max(h2 - l2, 1e-10)
+        body0 = abs(c0 - o0)
+        range0 = max(h0 - l0, 1e-10)
 
         is_bull3 = c3 > o3
         is_bear3 = c3 < o3
@@ -234,6 +236,7 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         is_bear2 = c2 < o2
         is_bull1 = c1 > o1
         is_bear1 = c1 < o1
+        is_bull0 = c0 > o0
 
         # 1. THREE LINE STRIKE
         if is_bear1 and is_bear2 and is_bear3 and is_bull4:
@@ -429,13 +432,13 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
         puan = 1
         k1h, _ = ss_multi.get("1h", ("", ""))
         k15, _ = ss_multi.get("15m", ("", ""))
-        if (sig_type == "BUY" and "Yeşil" in k1h) or (sig_type == "SELL" and "Kırmızı" in k1h):
+        if "Yeşil" in k1h:
             puan += 1
-        if (sig_type == "BUY" and "Yeşil" in k15) or (sig_type == "SELL" and "Kırmızı" in k15):
+        if "Yeşil" in k15:
             puan += 1
         if rvol >= 1.1:
             puan += 1
-        if ("Boğa" in candle_pat and sig_type == "BUY") or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend):
+        if ("Boğa" in candle_pat) or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend):
             puan += 1
 
         puan = min(puan, 5)
@@ -467,7 +470,7 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     return df_4h
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
-    """TradingView Pine Script ECO: SADECE o an açık olan canlı mumdaki kesişim."""
+    """TradingView Pine Script ECO: BIST için SADECE AL sinyallerini tarar."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -484,11 +487,13 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
 
     hiDiff = high - high.shift(1)
     loDiff = low.shift(1) - low
+
     plusDM = pd.Series(np.where((hiDiff > loDiff) & (hiDiff > 0), hiDiff, 0.0), index=df.index)
     minusDM = pd.Series(np.where((loDiff > hiDiff) & (loDiff > 0), loDiff, 0.0), index=df.index)
 
     DMIlength = 10
     Stolength = 3
+
     ATR = wwma(tr, DMIlength)
     PlusDI = 100 * wwma(plusDM, DMIlength) / ATR.replace(0, 1e-10)
     MinusDI = 100 * wwma(minusDM, DMIlength) / ATR.replace(0, 1e-10)
@@ -496,23 +501,22 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
 
     hi = osc.rolling(window=Stolength).max()
     lo = osc.rolling(window=Stolength).min()
+
     sum_osc_lo = (osc - lo).rolling(window=Stolength).sum()
     sum_hi_lo = (hi - lo).rolling(window=Stolength).sum()
+
     denom = sum_hi_lo.replace(0, 1e-10)
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
+    # SADECE VE SADECE AL SİNYALİ (Stoch 10 seviyesini yukarı kestiğinde)
     c_prev = float(stoch.iloc[-2])
     c_curr = float(stoch.iloc[-1])
 
-    sig_type = None
-    if c_prev < 10 and c_curr > 10:
-        sig_type = "BUY"
-    elif c_prev > 90 and c_curr < 90:
-        sig_type = "SELL"
-    else:
-        return None
+    if not (c_prev < 10 and c_curr > 10):
+        return None # SAT sinyalleri elenir, sadece AL sinyali geçer
 
+    sig_type = "BUY"
     target_idx = -1
     candle_time = df.index[target_idx]
 
@@ -552,7 +556,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
             f"▫️ <b>Ana Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
         )
 
-    tag = "🟢 <b>BIST AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>BIST SAT SİNYALİ</b>"
+    tag = "🟢 <b>BIST AL SİNYALİ</b>"
 
     # Sadeleştirilmiş Telegram Kartı
     return (
@@ -654,7 +658,7 @@ def main():
     if scan_4h: aktif_modlar.append("4 Saatlik")
     if scan_1d: aktif_modlar.append("Günlük")
     
-    print(f"BIST 100 Taraması Başlıyor (Saat: {now_tsi.strftime('%H:%M')} TSİ) -> Aktif Modlar: {', '.join(aktif_modlar)} ({len(BIST_TICKERS)} Hisse)...")
+    print(f"BIST 100 SADECE AL Taraması Başlıyor (Saat: {now_tsi.strftime('%H:%M')} TSİ) -> Aktif Modlar: {', '.join(aktif_modlar)} ({len(BIST_TICKERS)} Hisse)...")
     all_signals = []
 
     with ThreadPoolExecutor(max_workers=20) as executor:
@@ -675,7 +679,7 @@ def main():
         if i < len(all_signals) - 1:
             time.sleep(1.5)
 
-    print(f"BIST Taraması bitti! Bulunan toplam sinyal: {toplam}")
+    print(f"BIST Taraması bitti! Bulunan toplam AL sinyali: {toplam}")
 
 if __name__ == "__main__":
     main()
