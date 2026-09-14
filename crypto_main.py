@@ -497,17 +497,13 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
         )
 
     tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
-    trigger = "10 seviyesini yukarı kesti ('B')" if sig_type == "BUY" else "90 seviyesini aşağı kesti ('S')"
 
     return (
         f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
         f"🪙 <b>Koin:</b> <a href=\"{tv_link}\">#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
         f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
         f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-        f"⚡ <b>Mum Durumu:</b> ⚠️ CANLI MUM (Anlık Sinyal)\n"
-        f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n"
-        f"📊 <b>DMI-Stoch:</b> {c_curr:.1f} (Önceki: {c_prev:.1f})\n"
-        f"🎯 <b>Tetikleyici:</b> DMI-Stoch {trigger}\n\n"
+        f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n\n"
         f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
         f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
         f"<b>🕯️ Formasyon & Trend Teyitleri:</b>\n"
@@ -538,11 +534,6 @@ def scan_coin(symbol: str):
         s15m = evaluate_eco_crypto(df_15m, symbol, "15 Dakika (15m)", ss_multi)
         if s15m: signals.append(s15m)
 
-        s1h = evaluate_eco_crypto(df_1h, symbol, "1 Saat (1h)", ss_multi)
-        if s1h: signals.append(s1h)
-
-        s4h = evaluate_eco_crypto(df_4h, symbol, "4 Saat (4h)", ss_multi)
-        if s4h: signals.append(s4h)
     except Exception as e:
         print(f"{symbol} analiz hatası: {e}")
     return signals
@@ -564,4 +555,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
