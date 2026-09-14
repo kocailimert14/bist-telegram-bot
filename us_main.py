@@ -506,11 +506,14 @@ def scan_ticker(symbol: str):
             "4h": calculate_slingshot(df_4h, -1)
         }
 
+        # 15 Dakika (15m) canlı mum sinyal değerlendirmesi
+        s15m = evaluate_eco(clean_15m, symbol, "15 Dakika (15m)", ss_multi)
+        if s15m: signals.append(s15m)
+
+        # 30 Dakika (30m) canlı mum sinyal değerlendirmesi
         s30m = evaluate_eco(clean_30m, symbol, "30 Dakika (30m)", ss_multi)
         if s30m: signals.append(s30m)
 
-        s1h = evaluate_eco(clean_1h, symbol, "1 Saat (1h)", ss_multi)
-        if s1h: signals.append(s1h)
     except Exception as e:
         print(f"{symbol} analiz hatası: {e}")
     return signals
@@ -536,4 +539,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
