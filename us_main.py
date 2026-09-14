@@ -45,7 +45,12 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+        if 'Close' in df.columns.get_level_values(0):
+            df.columns = df.columns.get_level_values(0)
+        elif len(df.columns.levels) > 1 and 'Close' in df.columns.get_level_values(1):
+            df.columns = df.columns.get_level_values(1)
+        else:
+            df.columns = df.columns.get_level_values(0)
     df = df.dropna(subset=['High', 'Low', 'Close'])
     if getattr(df.index, 'tz', None) is not None:
         df.index = df.index.tz_convert('Europe/Istanbul')
@@ -344,15 +349,44 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
 def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str):
     try:
         vol = df['Volume'].squeeze()
-        curr_vol = float(vol.iloc[idx])
+        if isinstance(vol, pd.DataFrame):
+            vol = vol.iloc[:, 0]
+
+        # Son 20 tamamlanmış mumun ortalama hacmini hesapla (0 olmayanlar)
         window = 20
-        if len(vol) > window + 1:
-            avg_vol = float(vol.iloc[-window-1:-1].mean())
+        past_vols = vol.iloc[-window-1:-1] if len(vol) > window + 1 else vol.iloc[:-1]
+        valid_past = past_vols[past_vols > 0]
+        avg_vol = float(valid_past.mean()) if len(valid_past) > 0 else float(vol[vol > 0].mean()) if len(vol[vol > 0]) > 0 else 1.0
+
+        # Canlı mum hacmi
+        raw_curr_vol = float(vol.iloc[idx]) if len(vol) > 0 else 0.0
+
+        # Yahoo Finance canlı mumda (idx = -1) genellikle 0 hacim döndürür.
+        # Bu durumda sinyali başlatan son kapanmış mumun (-2) hacmi baz alınır.
+        if (raw_curr_vol <= 0 or np.isnan(raw_curr_vol)) and len(vol) >= 2:
+            eval_vol = float(vol.iloc[-2])
         else:
-            avg_vol = float(vol.mean())
+            eval_vol = raw_curr_vol
+
+        # Eğer canlı mumda hacim varsa ancak mum yeni açılmışsa geçen süreye göre normalize et
+        if eval_vol > 0 and idx == -1 and raw_curr_vol > 0:
+            candle_time = df.index[-1]
+            now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
+            elapsed_sec = (now_tsi - candle_time).total_seconds()
             
-        rvol = curr_vol / avg_vol if avg_vol > 0 else 1.0
-        
+            # Zaman dilimi süresini tespit et (örneğin 15 dk veya 30 dk)
+            if len(df.index) >= 2:
+                tf_sec = max(60.0, (df.index[-1] - df.index[-2]).total_seconds())
+            else:
+                tf_sec = 900.0
+
+            ratio = min(max(elapsed_sec / tf_sec, 0.1), 1.0)
+            projected_vol = eval_vol / ratio
+            # Aşırı uç değerleri sınırla
+            eval_vol = min(projected_vol, eval_vol * 4.0)
+
+        rvol = eval_vol / avg_vol if avg_vol > 0 else 1.0
+
         if rvol >= 1.5:
             hacim_metni = f"🚀 Çok Güçlü (Ortalamanın {rvol:.1f}x Katı)"
         elif rvol >= 1.1:
@@ -383,7 +417,7 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
         skor_metni = f"{yildizlar} ({puan}/5)"
         return hacim_metni, skor_metni
     except Exception:
-        return "⚪ Normal", "⭐⭐⭐ (3/5)"
+        return "⚪ Normal (Ortalamanın 1.0x Katı)", "⭐⭐⭐ (3/5)"
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     df = clean_df(df)
@@ -506,11 +540,11 @@ def scan_ticker(symbol: str):
             "4h": calculate_slingshot(df_4h, -1)
         }
 
-        # 15 Dakika (15m) canlı mum sinyal değerlendirmesi
+        # 15 Dakika (15m) canlı mum taraması
         s15m = evaluate_eco(clean_15m, symbol, "15 Dakika (15m)", ss_multi)
         if s15m: signals.append(s15m)
 
-        # 30 Dakika (30m) canlı mum sinyal değerlendirmesi
+        # 30 Dakika (30m) canlı mum taraması
         s30m = evaluate_eco(clean_30m, symbol, "30 Dakika (30m)", ss_multi)
         if s30m: signals.append(s30m)
 
