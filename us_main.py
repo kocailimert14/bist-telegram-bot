@@ -67,24 +67,13 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
     return pd.Series(res, index=series.index)
 
 def calculate_woodie_pivot(df: pd.DataFrame):
-    """TradingView Pivot Points Standard - Woodie Modeli"""
-    if df is None or len(df) < 10:
+    """Taranan zaman diliminin Woodie Pivot seviyelerini hesaplar."""
+    if df is None or len(df) < 5:
         return None
     try:
-        curr_date = df.index[-1].date()
-        past_df = df[df.index.date < curr_date]
-        if not past_df.empty:
-            last_past_date = past_df.index[-1].date()
-            prev_day_df = past_df[past_df.index.date == last_past_date]
-            prev_high = float(prev_day_df['High'].max())
-            prev_low = float(prev_day_df['Low'].min())
-            curr_day_df = df[df.index.date == curr_date]
-            curr_open = float(curr_day_df['Open'].iloc[0])
-        else:
-            lookback = min(len(df) - 1, 24)
-            prev_high = float(df['High'].iloc[-lookback-1:-1].max())
-            prev_low = float(df['Low'].iloc[-lookback-1:-1].min())
-            curr_open = float(df['Open'].iloc[-1])
+        prev_high = float(df['High'].iloc[-2])
+        prev_low = float(df['Low'].iloc[-2])
+        curr_open = float(df['Open'].iloc[-1])
 
         p = (prev_high + prev_low + 2.0 * curr_open) / 4.0
         r1 = 2.0 * p - prev_low
@@ -97,9 +86,7 @@ def calculate_woodie_pivot(df: pd.DataFrame):
         curr_price = float(df['Close'].iloc[-1])
         return {
             "P": p, "R1": r1, "S1": s1, "R2": r2, "S2": s2, "R3": r3, "S3": s3,
-            "dist_P": ((p - curr_price) / curr_price) * 100.0,
-            "dist_R1": ((r1 - curr_price) / curr_price) * 100.0,
-            "dist_S1": ((s1 - curr_price) / curr_price) * 100.0
+            "dist_P": ((p - curr_price) / curr_price) * 100.0
         }
     except Exception:
         return None
@@ -593,7 +580,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     if woodie:
         p_durum = "Üzerinde (Boğa)" if candle_price >= woodie["P"] else "Altında (Ayı)"
         woodie_metni = (
-            f"\n\n<b>📐 Woodie Pivot Seviyeleri (Günlük):</b>\n"
+            f"\n\n<b>📐 Woodie Pivot Seviyeleri ({tf_label}):</b>\n"
             f"▫️ <b>Pivot (P):</b> ${woodie['P']:,.2f} (<code>{woodie['dist_P']:+.1f}%</code>) - {p_durum}\n"
             f"▫️ <b>Dirençler:</b> R1: ${woodie['R1']:,.2f} | R2: ${woodie['R2']:,.2f}\n"
             f"▫️ <b>Destekler:</b> S1: ${woodie['S1']:,.2f} | S2: ${woodie['S2']:,.2f}"
