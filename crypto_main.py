@@ -23,6 +23,19 @@ COINS = [
     "SANDUSDT", "ZECUSDT", "HYPEUSDT", "GRAMUSDT", "SUSDT"
 ]
 
+def fmt_price(val: float) -> str:
+    """Kripto pariteleri için hassas ve dinamik fiyat biçimlendirmesi."""
+    if val is None:
+        return "0.00"
+    if abs(val) < 0.1:
+        return f"{val:.5f}"
+    elif abs(val) < 1.0:
+        return f"{val:.4f}"
+    elif abs(val) < 100.0:
+        return f"{val:,.3f}"
+    else:
+        return f"{val:,.2f}"
+
 def send_telegram(message: str) -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
@@ -43,26 +56,34 @@ def send_telegram(message: str) -> bool:
         return False
 
 def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
-    url_binance = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
-    try:
-        res = requests.get(url_binance, timeout=8)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, list) and len(data) >= 20:
-                df = pd.DataFrame(data, columns=[
-                    'time', 'Open', 'High', 'Low', 'Close', 'Volume', 
-                    'close_time', 'qav', 'num_trades', 'tbv', 'tqv', 'ignore'
-                ])
-                df['Open'] = df['Open'].astype(float)
-                df['High'] = df['High'].astype(float)
-                df['Low'] = df['Low'].astype(float)
-                df['Close'] = df['Close'].astype(float)
-                df['Volume'] = df['Volume'].astype(float)
-                df.index = pd.to_datetime(df['time'], unit='ms') + pd.Timedelta(hours=3)
-                return df
-    except Exception:
-        pass
+    """Canlı Binance resmi endpoint'leri üzerinden veri çeker, başarısızsa Bybit'e geçer."""
+    endpoints = [
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
+        f"https://api1.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
+        f"https://api3.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
+    ]
+    for url in endpoints:
+        try:
+            res = requests.get(url, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, list) and len(data) >= 20:
+                    df = pd.DataFrame(data, columns=[
+                        'time', 'Open', 'High', 'Low', 'Close', 'Volume', 
+                        'close_time', 'qav', 'num_trades', 'tbv', 'tqv', 'ignore'
+                    ])
+                    df['Open'] = df['Open'].astype(float)
+                    df['High'] = df['High'].astype(float)
+                    df['Low'] = df['Low'].astype(float)
+                    df['Close'] = df['Close'].astype(float)
+                    df['Volume'] = df['Volume'].astype(float)
+                    df.index = pd.to_datetime(df['time'], unit='ms') + pd.Timedelta(hours=3)
+                    return df
+        except Exception:
+            continue
 
+    # Bybit Spot Fallback
     interval_map = {"15m": "15", "1h": "60", "4h": "240"}
     bb_int = interval_map.get(interval, "60")
     url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={bb_int}&limit=200"
@@ -101,7 +122,10 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
     return pd.Series(res, index=series.index)
 
 def calculate_woodie_pivot(df: pd.DataFrame):
-    """Taranan zaman diliminin Woodie Pivot seviyelerini hesaplar."""
+    """
+    TradingView Pivot Points Standard - Woodie Modeli:
+    P = (prevHigh + prevLow + 2 * currOpen) / 4
+    """
     if df is None or len(df) < 5:
         return None
     try:
@@ -204,13 +228,13 @@ def detect_diagonal_trendline_and_initiation(df: pd.DataFrame, lookback: int = 4
 
                 if curr_c > line_val_now:
                     if sub_c[-2] <= line_val_prev or (curr_c - line_val_now) / line_val_now <= 0.04:
-                        dusen_kirilim_durumu = f"✅ Düşen Trend Çizgisi Yukarı Kırıldı! (Trend: ${line_val_now:,.2f}) (Boğa)"
+                        dusen_kirilim_durumu = f"✅ Düşen Trend Çizgisi Yukarı Kırıldı! (Trend: ${fmt_price(line_val_now)}) (Boğa)"
                     else:
-                        dusen_kirilim_durumu = f"🚀 Düşen Trend Üzerinde Seyrediyor (Trend: ${line_val_now:,.2f}) (Boğa)"
+                        dusen_kirilim_durumu = f"🚀 Düşen Trend Üzerinde Seyrediyor (Trend: ${fmt_price(line_val_now)}) (Boğa)"
                 elif curr_h >= line_val_now and curr_c <= line_val_now:
-                    dusen_kirilim_durumu = f"⚠️ Düşen Trend Çizgisi Test Ediliyor (Direnç: ${line_val_now:,.2f}) (Nötr)"
+                    dusen_kirilim_durumu = f"⚠️ Düşen Trend Çizgisi Test Ediliyor (Direnç: ${fmt_price(line_val_now)}) (Nötr)"
                 else:
-                    dusen_kirilim_durumu = f"Düşen Trend Altında (Direnç: ${line_val_now:,.2f})"
+                    dusen_kirilim_durumu = f"Düşen Trend Altında (Direnç: ${fmt_price(line_val_now)})"
 
         lowest_idx = np.argmin(sub_l[:-2])
         lowest_val = sub_l[lowest_idx]
@@ -231,7 +255,7 @@ def detect_diagonal_trendline_and_initiation(df: pd.DataFrame, lookback: int = 4
                     up_line_now = up_slope * (window - 1) + up_intercept
 
                     if curr_c >= up_line_now:
-                        trend_baslatma_durumu = f"📈 Yeni Yükselen Trend Başlattı! (Dipten Destek: ${up_line_now:,.2f}, Yükselen Dip Onaylı) (Boğa)"
+                        trend_baslatma_durumu = f"📈 Yeni Yükselen Trend Başlattı! (Dipten Destek: ${fmt_price(up_line_now)}, Yükselen Dip Onaylı) (Boğa)"
                     else:
                         trend_baslatma_durumu = "Yükselen Trend Desteği Altında (Nötr)"
                 else:
@@ -577,8 +601,8 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
     if sup is not None and res is not None:
         sr_metni = (
             f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
-            f"▫️ <b>Ana Destek:</b> ${sup:,.4f} (<code>{d_sup:+.1f}%</code>)\n"
-            f"▫️ <b>Ana Direnç:</b> ${res:,.4f} (<code>{d_res:+.1f}%</code>)"
+            f"▫️ <b>Ana Destek:</b> ${fmt_price(sup)} (<code>{d_sup:+.1f}%</code>)\n"
+            f"▫️ <b>Ana Direnç:</b> ${fmt_price(res)} (<code>{d_res:+.1f}%</code>)"
         )
 
     woodie_metni = ""
@@ -586,9 +610,9 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
         p_durum = "Üzerinde (Boğa)" if candle_price >= woodie["P"] else "Altında (Ayı)"
         woodie_metni = (
             f"\n\n<b>📐 Woodie Pivot Seviyeleri ({tf_label}):</b>\n"
-            f"▫️ <b>Pivot (P):</b> ${woodie['P']:,.4f} (<code>{woodie['dist_P']:+.1f}%</code>) - {p_durum}\n"
-            f"▫️ <b>Dirençler:</b> R1: ${woodie['R1']:,.4f} | R2: ${woodie['R2']:,.4f}\n"
-            f"▫️ <b>Destekler:</b> S1: ${woodie['S1']:,.4f} | S2: ${woodie['S2']:,.4f}"
+            f"▫️ <b>Pivot (P):</b> ${fmt_price(woodie['P'])} (<code>{woodie['dist_P']:+.1f}%</code>) - {p_durum}\n"
+            f"▫️ <b>Dirençler:</b> R1: ${fmt_price(woodie['R1'])} | R2: ${fmt_price(woodie['R2'])}\n"
+            f"▫️ <b>Destekler:</b> S1: ${fmt_price(woodie['S1'])} | S2: ${fmt_price(woodie['S2'])}"
         )
 
     tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
@@ -598,7 +622,7 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
         f"🪙 <b>Koin:</b> <a href=\"{tv_link}\">#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
         f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
         f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-        f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n\n"
+        f"💵 <b>Fiyat:</b> ${fmt_price(candle_price)}\n\n"
         f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
         f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
         f"<b>🕯️ Formasyon & Trend Teyitleri:</b>\n"
