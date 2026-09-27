@@ -66,6 +66,44 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
         res[i] = (prev * (length - 1) + vals[i]) / length
     return pd.Series(res, index=series.index)
 
+def calculate_woodie_pivot(df: pd.DataFrame):
+    """TradingView Pivot Points Standard - Woodie Modeli"""
+    if df is None or len(df) < 10:
+        return None
+    try:
+        curr_date = df.index[-1].date()
+        past_df = df[df.index.date < curr_date]
+        if not past_df.empty:
+            last_past_date = past_df.index[-1].date()
+            prev_day_df = past_df[past_df.index.date == last_past_date]
+            prev_high = float(prev_day_df['High'].max())
+            prev_low = float(prev_day_df['Low'].min())
+            curr_day_df = df[df.index.date == curr_date]
+            curr_open = float(curr_day_df['Open'].iloc[0])
+        else:
+            lookback = min(len(df) - 1, 24)
+            prev_high = float(df['High'].iloc[-lookback-1:-1].max())
+            prev_low = float(df['Low'].iloc[-lookback-1:-1].min())
+            curr_open = float(df['Open'].iloc[-1])
+
+        p = (prev_high + prev_low + 2.0 * curr_open) / 4.0
+        r1 = 2.0 * p - prev_low
+        s1 = 2.0 * p - prev_high
+        r2 = p + (prev_high - prev_low)
+        s2 = p - (prev_high - prev_low)
+        r3 = prev_high + 2.0 * (p - prev_low)
+        s3 = prev_low - 2.0 * (prev_high - p)
+
+        curr_price = float(df['Close'].iloc[-1])
+        return {
+            "P": p, "R1": r1, "S1": s1, "R2": r2, "S2": s2, "R3": r3, "S3": s3,
+            "dist_P": ((p - curr_price) / curr_price) * 100.0,
+            "dist_R1": ((r1 - curr_price) / curr_price) * 100.0,
+            "dist_S1": ((s1 - curr_price) / curr_price) * 100.0
+        }
+    except Exception:
+        return None
+
 def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
     if df is None or len(df) < 15:
         return "Belirsiz", "Belirsiz"
@@ -203,7 +241,6 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         upper_wick = h - np.maximum(o, c)
         lower_wick = np.minimum(o, c) - l
 
-        # 1. EN YÜKSEK BAŞARI ORANLI YÜKSELİŞ (BOĞA) FORMASYONLARI
         if (is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and 
             c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]):
             return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş / Boğa) (%84 Başarı)"
@@ -229,7 +266,6 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
             abs(o[4] - o[3]) / o[3] <= 0.003 and c[4] > h[3]):
             return "⚡ Bullish Separating Lines - Ayrılan Çizgiler (Yükseliş Devam / Boğa) (%68 Başarı)"
 
-        # 2. EN YÜKSEK BAŞARI ORANLI DÜŞÜŞ (AYI) FORMASYONLARI
         if (is_bear[2] and is_bear[3] and is_bear[4] and 
             c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and
             lower_wick[2]/cr[2] < 0.25 and lower_wick[3]/cr[3] < 0.25 and lower_wick[4]/cr[4] < 0.25):
@@ -259,9 +295,6 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         return "Standart Mum"
 
 def detect_harmonic_patterns(df: pd.DataFrame, deviation_pct: float = 1.8) -> str:
-    """
-    En yüksek başarı yüzdesine sahip Harmonik Fiyat Formasyonları (Bat, Crab, Butterfly, Gartley, Shark).
-    """
     if df is None or len(df) < 30:
         return "Harmonik Formasyon Yok"
     try:
@@ -403,7 +436,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
     except Exception:
         return None, None, 0.0, 0.0
 
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str, harmonic_pat: str = "Harmonik Formasyon Yok"):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str, harmonic_pat: str = "Harmonik Formasyon Yok", woodie: dict = None):
     try:
         vol = df['Volume'].squeeze()
         curr_vol = float(vol.iloc[idx])
@@ -436,6 +469,10 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
         if ("Boğa" in candle_pat) or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend) or ("Boğa" in harmonic_pat):
             puan += 1
 
+        curr_price = float(df['Close'].iloc[idx])
+        if woodie and curr_price >= woodie["P"]:
+            puan += 1
+
         puan = min(puan, 5)
         yildizlar = "⭐" * puan
         skor_metni = f"{yildizlar} ({puan}/5)"
@@ -461,7 +498,6 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     return df_4h
 
 def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
-    """TradingView Pine Script ECO: BIST için SADECE AL sinyallerini tarar."""
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -495,7 +531,6 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
-    # SADECE VE SADECE AL SİNYALİ
     c_prev = float(stoch.iloc[-2])
     c_curr = float(stoch.iloc[-1])
 
@@ -525,9 +560,10 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     candle_pat = detect_candlestick_patterns(df)
     harmonic_pat = detect_harmonic_patterns(df)
     smc_model = detect_ict_smc_models(df)
+    woodie = calculate_woodie_pivot(df)
 
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend, harmonic_pat)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend, harmonic_pat, woodie)
 
     ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
     ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
@@ -539,6 +575,16 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
             f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
             f"▫️ <b>Ana Destek:</b> {sup:.2f} TL (<code>{d_sup:+.1f}%</code>)\n"
             f"▫️ <b>Ana Direnç:</b> {res:.2f} TL (<code>{d_res:+.1f}%</code>)"
+        )
+
+    woodie_metni = ""
+    if woodie:
+        p_durum = "Üzerinde (Boğa)" if candle_price >= woodie["P"] else "Altında (Ayı)"
+        woodie_metni = (
+            f"\n\n<b>📐 Woodie Pivot Seviyeleri (Günlük):</b>\n"
+            f"▫️ <b>Pivot (P):</b> {woodie['P']:.2f} TL (<code>{woodie['dist_P']:+.1f}%</code>) - {p_durum}\n"
+            f"▫️ <b>Dirençler:</b> R1: {woodie['R1']:.2f} TL | R2: {woodie['R2']:.2f} TL\n"
+            f"▫️ <b>Destekler:</b> S1: {woodie['S1']:.2f} TL | S2: {woodie['S2']:.2f} TL"
         )
 
     tag = "🟢 <b>BIST AL SİNYALİ</b>"
@@ -562,13 +608,12 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
         f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
         f"▫️ <b>4 Saat (4h):</b> {ss_4h_k} Kanal | {ss_4h_n} Nokta"
         f"{sr_metni}"
+        f"{woodie_metni}"
     )
 
 def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
     signals = []
-    df_1h = None
-    df_4h = None
-    df_15m = None
+    df_1h, df_4h, df_15m = None, None, None
     try:
         df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
         clean_1h = clean_df(df_1h)
@@ -584,52 +629,32 @@ def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
     except Exception:
         ss_multi = {"15m": ("Belirsiz", "Belirsiz"), "1h": ("Belirsiz", "Belirsiz"), "4h": ("Belirsiz", "Belirsiz")}
 
-    if scan_1h and df_1h is not None and not df_1h.empty:
-        try:
-            s1h = evaluate_eco(df_1h, symbol, "1 Saat (1h)", ss_multi)
-            if s1h: signals.append(s1h)
-        except Exception: pass
+    if scan_1h and clean_1h is not None and not clean_1h.empty:
+        s1h = evaluate_eco(clean_1h, symbol, "1 Saat (1h)", ss_multi)
+        if s1h: signals.append(s1h)
 
     if scan_4h and df_4h is not None and not df_4h.empty:
-        try:
-            s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)", ss_multi)
-            if s4h: signals.append(s4h)
-        except Exception: pass
-
-    if scan_1d:
-        try:
-            df_1d = yf.download(symbol, period="1y", interval="1d", progress=False)
-            s1d = evaluate_eco(df_1d, symbol, "Günlük (1D)", ss_multi)
-            if s1d: signals.append(s1d)
-        except Exception: pass
+        s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)", ss_multi)
+        if s4h: signals.append(s4h)
 
     return signals
 
-def determine_scan_modes(now_tsi):
-    h = now_tsi.hour
-    m = now_tsi.minute
-    if h >= 19 or h < 9 or (h == 9 and m < 45):
-        return False, False, False
-    scan_4h = (h == 12 and 15 <= m <= 35) or (h == 17 and 15 <= m <= 35)
-    scan_1d = (h == 17 and 15 <= m <= 35)
-    scan_1h = not (scan_4h or scan_1d)
-    return scan_1h, scan_4h, scan_1d
-
 def main():
     now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
-    scan_1h, scan_4h, scan_1d = determine_scan_modes(now_tsi)
-    if not scan_1h and not scan_4h and not scan_1d:
-        print(f"Seans dışı saat ({now_tsi.strftime('%H:%M')} TSİ). Tarama yapılmıyor.")
-        return
+    scan_1h = True
+    scan_4h = True
+    scan_1d = False
+
     all_signals = []
     with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(analyze_ticker, ticker, scan_1h, scan_4h, scan_1d): ticker for ticker in BIST_TICKERS}
+        futures = {executor.submit(analyze_ticker, t, scan_1h, scan_4h, scan_1d): t for t in BIST_TICKERS}
         for future in as_completed(futures):
             try:
-                results = future.result()
-                if results: all_signals.extend(results)
+                res = future.result()
+                if res: all_signals.extend(res)
             except Exception as e:
                 print(f"Hisse analiz hatası: {e}")
+
     for i, sig in enumerate(all_signals):
         send_telegram(sig)
         if i < len(all_signals) - 1:
