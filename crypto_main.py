@@ -24,7 +24,7 @@ COINS = [
 ]
 
 def fmt_price(val: float) -> str:
-    """Kripto pariteleri için hassas ve dinamik fiyat biçimlendirmesi."""
+    """Kripto fiyatlarını basamak hassasiyetine göre dinamik formatlar."""
     if val is None:
         return "0.00"
     if abs(val) < 0.1:
@@ -56,7 +56,7 @@ def send_telegram(message: str) -> bool:
         return False
 
 def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
-    """Canlı Binance resmi endpoint'leri üzerinden veri çeker, başarısızsa Bybit'e geçer."""
+    """Canlı Binance resmi API endpoint'lerinden çeker, hata durumunda Bybit'e geçer."""
     endpoints = [
         f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
         f"https://api1.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
@@ -68,7 +68,7 @@ def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
             res = requests.get(url, timeout=5)
             if res.status_code == 200:
                 data = res.json()
-                if isinstance(data, list) and len(data) >= 20:
+                if isinstance(data, list) and len(data) >= 5:
                     df = pd.DataFrame(data, columns=[
                         'time', 'Open', 'High', 'Low', 'Close', 'Volume', 
                         'close_time', 'qav', 'num_trades', 'tbv', 'tqv', 'ignore'
@@ -83,15 +83,14 @@ def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
         except Exception:
             continue
 
-    # Bybit Spot Fallback
-    interval_map = {"15m": "15", "1h": "60", "4h": "240"}
+    interval_map = {"15m": "15", "1h": "60", "4h": "240", "1d": "D", "1w": "W"}
     bb_int = interval_map.get(interval, "60")
     url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={bb_int}&limit=200"
     try:
         res = requests.get(url_bybit, timeout=8)
         if res.status_code == 200:
             raw_list = res.json().get('result', {}).get('list', [])
-            if raw_list and len(raw_list) >= 20:
+            if raw_list and len(raw_list) >= 5:
                 raw_list = raw_list[::-1]
                 df = pd.DataFrame(raw_list, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'turn'])
                 df['Open'] = df['Open'].astype(float)
@@ -121,17 +120,17 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
         res[i] = (prev * (length - 1) + vals[i]) / length
     return pd.Series(res, index=series.index)
 
-def calculate_woodie_pivot(df: pd.DataFrame):
+def calculate_woodie_pivot_htf(df_htf: pd.DataFrame, curr_price: float):
     """
-    TradingView Pivot Points Standard - Woodie Modeli:
+    TradingView Pivot Points Standard (Woodie) Formülü:
     P = (prevHigh + prevLow + 2 * currOpen) / 4
     """
-    if df is None or len(df) < 5:
+    if df_htf is None or len(df_htf) < 2:
         return None
     try:
-        prev_h = float(df['High'].iloc[-2])
-        prev_l = float(df['Low'].iloc[-2])
-        curr_o = float(df['Open'].iloc[-1])
+        prev_h = float(df_htf['High'].iloc[-2])
+        prev_l = float(df_htf['Low'].iloc[-2])
+        curr_o = float(df_htf['Open'].iloc[-1])
 
         p = (prev_h + prev_l + 2.0 * curr_o) / 4.0
         r1 = 2.0 * p - prev_l
@@ -141,10 +140,9 @@ def calculate_woodie_pivot(df: pd.DataFrame):
         r3 = prev_h + 2.0 * (p - prev_l)
         s3 = prev_l - 2.0 * (prev_h - p)
 
-        curr_p = float(df['Close'].iloc[-1])
         return {
             "P": p, "R1": r1, "S1": s1, "R2": r2, "S2": s2, "R3": r3, "S3": s3,
-            "dist_P": ((p - curr_p) / curr_p) * 100.0
+            "dist_P": ((p - curr_price) / curr_price) * 100.0
         }
     except Exception:
         return None
@@ -532,7 +530,7 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
     except Exception:
         return "⚪ Normal", "⭐⭐⭐ (3/5)"
 
-def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
+def evaluate_eco_crypto(df: pd.DataFrame, df_htf: pd.DataFrame, symbol: str, tf_label: str, pivot_label: str, ss_multi: dict):
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -588,7 +586,8 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
     candle_pat = detect_candlestick_patterns(df)
     harmonic_pat = detect_harmonic_patterns(df)
     smc_model = detect_ict_smc_models(df)
-    woodie = calculate_woodie_pivot(df)
+    
+    woodie = calculate_woodie_pivot_htf(df_htf, candle_price)
 
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
     hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend, harmonic_pat, woodie)
@@ -609,7 +608,7 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
     if woodie:
         p_durum = "Üzerinde (Boğa)" if candle_price >= woodie["P"] else "Altında (Ayı)"
         woodie_metni = (
-            f"\n\n<b>📐 Woodie Pivot Seviyeleri ({tf_label}):</b>\n"
+            f"\n\n<b>📐 Woodie Pivot Seviyeleri ({pivot_label}):</b>\n"
             f"▫️ <b>Pivot (P):</b> ${fmt_price(woodie['P'])} (<code>{woodie['dist_P']:+.1f}%</code>) - {p_durum}\n"
             f"▫️ <b>Dirençler:</b> R1: ${fmt_price(woodie['R1'])} | R2: ${fmt_price(woodie['R2'])}\n"
             f"▫️ <b>Destekler:</b> S1: ${fmt_price(woodie['S1'])} | S2: ${fmt_price(woodie['S2'])}"
@@ -645,6 +644,12 @@ def scan_coin(symbol: str):
         df_15m = get_binance_klines(symbol, "15m")
         df_1h = get_binance_klines(symbol, "1h")
         df_4h = get_binance_klines(symbol, "4h")
+        
+        # TradingView Pivot kaynakları (15m ve 1h için Günlük 1D, 4h için Haftalık 1W)
+        df_1d = get_binance_klines(symbol, "1d")
+        df_1w = get_binance_klines(symbol, "1w")
+
+        df_htf_4h = df_1w if (df_1w is not None and len(df_1w) >= 2) else df_1d
 
         ss_multi = {
             "15m": calculate_slingshot(df_15m, -1),
@@ -652,13 +657,16 @@ def scan_coin(symbol: str):
             "4h": calculate_slingshot(df_4h, -1)
         }
 
-        s15m = evaluate_eco_crypto(df_15m, symbol, "15 Dakika (15m)", ss_multi)
+        # 15m taraması: TradingView 15m grafiğindeki Günlük Woodie Pivot'u kullanır (ETH: 2688.81)
+        s15m = evaluate_eco_crypto(df_15m, df_1d, symbol, "15 Dakika (15m)", "Günlük / 15m Grafiği", ss_multi)
         if s15m: signals.append(s15m)
 
-        s1h = evaluate_eco_crypto(df_1h, symbol, "1 Saat (1h)", ss_multi)
+        # 1h taraması: Günlük Woodie Pivot'u kullanır
+        s1h = evaluate_eco_crypto(df_1h, df_1d, symbol, "1 Saat (1h)", "Günlük / 1h Grafiği", ss_multi)
         if s1h: signals.append(s1h)
 
-        s4h = evaluate_eco_crypto(df_4h, symbol, "4 Saat (4h)", ss_multi)
+        # 4h taraması: TradingView 4h grafiğindeki Haftalık Woodie Pivot'u kullanır (SUSDT: 0.03680)
+        s4h = evaluate_eco_crypto(df_4h, df_htf_4h, symbol, "4 Saat (4h)", "Haftalık / 4h Grafiği", ss_multi)
         if s4h: signals.append(s4h)
 
     except Exception as e:
