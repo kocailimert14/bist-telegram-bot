@@ -258,6 +258,63 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
     except Exception:
         return "Standart Mum"
 
+def detect_harmonic_patterns(df: pd.DataFrame, deviation_pct: float = 1.8) -> str:
+    """
+    En yüksek başarı yüzdesine sahip Harmonik Fiyat Formasyonları (Bat, Crab, Butterfly, Gartley, Shark).
+    """
+    if df is None or len(df) < 30:
+        return "Harmonik Formasyon Yok"
+    try:
+        highs, lows, closes = df['High'].values, df['Low'].values, df['Close'].values
+        trend, last_h, last_l, idx_h, idx_l = 0, highs[0], lows[0], 0, 0
+        pivots = []
+        for i in range(1, len(df)):
+            h, l = highs[i], lows[i]
+            if trend <= 0 and h >= last_l * (1 + deviation_pct / 100):
+                pivots.append((idx_l, 'L', last_l))
+                trend, last_h, idx_h = 1, h, i
+            elif trend >= 0 and l <= last_h * (1 - deviation_pct / 100):
+                pivots.append((idx_h, 'H', last_h))
+                trend, last_l, idx_l = -1, l, i
+            else:
+                if h > last_h: last_h, idx_h = h, i
+                if l < last_l: last_l, idx_l = l, i
+        pivots.append((idx_h, 'H', last_h) if trend == 1 else (idx_l, 'L', last_l))
+
+        PATTERNS = [
+            ("Bat (Yarasa)", 0.35, 0.55, 0.886, 0.08, "🦇", 85),
+            ("Gartley 222", 0.58, 0.65, 0.786, 0.08, "📐", 75),
+            ("Butterfly (Kelebek)", 0.72, 0.82, 1.272, 0.15, "🦋", 78),
+            ("Crab (Yengeç)", 0.35, 0.65, 1.618, 0.15, "🦀", 80),
+            ("Shark (Köpekbalığı)", 0.40, 0.90, 0.886, 0.12, "🦈", 75)
+        ]
+
+        def eval_xabcd(pX, pA, pB, pC, d_price):
+            is_bull = (pX[1] == 'L' and pA[1] == 'H' and pB[1] == 'L' and pC[1] == 'H')
+            is_bear = (pX[1] == 'H' and pA[1] == 'L' and pB[1] == 'H' and pC[1] == 'L')
+            if not (is_bull or is_bear): return None
+            xa = abs(pA[2] - pX[2])
+            if xa == 0: return None
+            b_ratio = abs(pA[2] - pB[2]) / xa
+            d_ratio = (pA[2] - d_price) / xa if is_bull else (d_price - pA[2]) / xa
+            direction = "Yükseliş / Boğa" if is_bull else "Düşüş / Ayı"
+            prefix = "Bullish" if is_bull else "Bearish"
+
+            for name, b_min, b_max, d_target, d_tol, icon, rate in PATTERNS:
+                if (b_min <= b_ratio <= b_max) and abs(d_ratio - d_target) <= d_tol:
+                    return f"{icon} {prefix} {name} ({direction}) (%{rate} Başarı)"
+            return None
+
+        if len(pivots) >= 5 and (len(df) - 1 - pivots[-1][0]) <= 6:
+            res = eval_xabcd(pivots[-5], pivots[-4], pivots[-3], pivots[-2], pivots[-1][2])
+            if res: return res
+        if len(pivots) >= 4:
+            res = eval_xabcd(pivots[-4], pivots[-3], pivots[-2], pivots[-1], closes[-1])
+            if res: return res
+        return "Harmonik Formasyon Yok"
+    except Exception:
+        return "Harmonik Formasyon Yok"
+
 def detect_ict_smc_models(df: pd.DataFrame) -> str:
     if df is None or len(df) < 25:
         return "Belirsiz"
@@ -346,7 +403,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
     except Exception:
         return None, None, 0.0, 0.0
 
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str, harmonic_pat: str = "Harmonik Formasyon Yok"):
     try:
         vol = df['Volume'].squeeze()
         curr_vol = float(vol.iloc[idx])
@@ -376,7 +433,7 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
             puan += 1
         if rvol >= 1.1:
             puan += 1
-        if ("Boğa" in candle_pat) or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend):
+        if ("Boğa" in candle_pat) or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend) or ("Boğa" in harmonic_pat):
             puan += 1
 
         puan = min(puan, 5)
@@ -438,10 +495,10 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     stoch = (sum_osc_lo / denom) * 100
     stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
 
+    # SADECE VE SADECE AL SİNYALİ
     c_prev = float(stoch.iloc[-2])
     c_curr = float(stoch.iloc[-1])
 
-    # SADECE VE SADECE AL SİNYALİ
     if not (c_prev < 10 and c_curr > 10):
         return None
 
@@ -466,10 +523,11 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
 
     dusen_trend, yeni_trend = detect_diagonal_trendline_and_initiation(df)
     candle_pat = detect_candlestick_patterns(df)
+    harmonic_pat = detect_harmonic_patterns(df)
     smc_model = detect_ict_smc_models(df)
 
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend, harmonic_pat)
 
     ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
     ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
@@ -497,6 +555,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
         f"▫️ <b>Düşen Trend Kırılımı:</b> {dusen_trend}\n"
         f"▫️ <b>Trend Başlatma Durumu:</b> {yeni_trend}\n"
         f"▫️ <b>Mum Formasyonu:</b> {candle_pat}\n"
+        f"▫️ <b>Harmonik Formasyon:</b> {harmonic_pat}\n"
         f"▫️ <b>ICT / SMC Modeli:</b> {smc_model}\n\n"
         f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
         f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
