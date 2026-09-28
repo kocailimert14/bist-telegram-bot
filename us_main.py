@@ -14,6 +14,11 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("HATA: Telegram Token veya Chat ID bulunamadı!")
     sys.exit(1)
 
+# TradingView Pivot Timeframe Seçeneği:
+# "Auto" : 15m için Günlük (1D), 30m için Haftalık (1W) baz alır (TradingView varsayılanı).
+# "Daily": Hem 15m hem 30m için Günlük (1D) baz alır.
+PIVOT_ANCHOR_MODE = "Auto"
+
 US_TICKERS = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "AVGO", "ORCL",
     "CRM",  "AMD",  "QCOM", "INTC",  "CSCO", "IBM",  "TXN",  "AMAT", "MU",   "NOW",
@@ -74,10 +79,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
         high = df['High'].squeeze()
         low = df['Low'].squeeze()
         prev_close = close.shift(1)
-        tr1 = high - low
-        tr2 = (high - prev_close).abs()
-        tr3 = (low - prev_close).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
 
         ma1 = close.ewm(span=13, adjust=False).mean()
         ma2 = close.ewm(span=21, adjust=False).mean()
@@ -102,7 +104,7 @@ def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
 
         if (v_ma1 > v_ma2) and (v_ma2 > v_ma3):
             nokta_renk = "🟢 Yeşil"
-        elif (v_ma1 < v_lower if False else v_ma2 < v_ma3):
+        elif v_ma2 < v_ma3:
             nokta_renk = "🔴 Kırmızı"
         else:
             nokta_renk = "🟡 Sarı"
@@ -110,6 +112,33 @@ def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
         return kanal_renk, nokta_renk
     except Exception:
         return "Belirsiz", "Belirsiz"
+
+def calculate_woodie_pivots(df_anchor: pd.DataFrame, label: str = "Günlük") -> dict:
+    """TradingView Woodie Pivot Noktaları hesaplaması."""
+    try:
+        df = clean_df(df_anchor)
+        if df.empty or len(df) < 2:
+            return {}
+
+        prev_high = float(df['High'].iloc[-2])
+        prev_low = float(df['Low'].iloc[-2])
+        curr_open = float(df['Open'].iloc[-1])
+
+        p = (prev_high + prev_low + 2.0 * curr_open) / 4.0
+        r1 = 2.0 * p - prev_low
+        s1 = 2.0 * p - prev_high
+        r2 = p + (prev_high - prev_low)
+        s2 = p - (prev_high - prev_low)
+        r3 = prev_high + 2.0 * (p - prev_low)
+        s3 = prev_low - 2.0 * (prev_high - p)
+
+        return {
+            "P": p, "R1": r1, "S1": s1,
+            "R2": r2, "S2": s2, "R3": r3, "S3": s3,
+            "label": label
+        }
+    except Exception:
+        return {}
 
 def detect_diagonal_trendline_and_initiation(df: pd.DataFrame, lookback: int = 45):
     if df is None or len(df) < 20:
@@ -122,11 +151,10 @@ def detect_diagonal_trendline_and_initiation(df: pd.DataFrame, lookback: int = 4
         curr_c = sub_c[-1]
         curr_h = sub_h[-1]
 
-        peak_indices = []
-        k = 2
-        for i in range(k, window - k):
-            if all(sub_h[i] >= sub_h[i-j] for j in range(1, k+1)) and all(sub_h[i] >= sub_h[i+j] for j in range(1, k+1)):
-                peak_indices.append(i)
+        peak_indices = [
+            i for i in range(2, window - 2)
+            if all(sub_h[i] >= sub_h[i-j] for j in range(1, 3)) and all(sub_h[i] >= sub_h[i+j] for j in range(1, 3))
+        ]
 
         dusen_kirilim_durumu = "Düşen Trend Tespit Edilmedi"
         trend_baslatma_durumu = "Yeni Trend Başlamadı"
@@ -157,29 +185,27 @@ def detect_diagonal_trendline_and_initiation(df: pd.DataFrame, lookback: int = 4
         lowest_val = sub_l[lowest_idx]
 
         if lowest_idx < window - 4:
-            after_troughs = []
-            for i in range(lowest_idx + 2, window - 1):
-                if sub_l[i] <= sub_l[i-1] and sub_l[i] <= sub_l[i+1]:
-                    after_troughs.append(i)
+            after_troughs = [
+                i for i in range(lowest_idx + 2, window - 1)
+                if sub_l[i] <= sub_l[i-1] and sub_l[i] <= sub_l[i+1]
+            ]
 
             if after_troughs:
-                second_low_idx = after_troughs[-1]
-                second_low_val = sub_l[second_low_idx]
+                sec_idx = after_troughs[-1]
+                sec_val = sub_l[sec_idx]
 
-                if second_low_val > lowest_val:
-                    up_slope = (second_low_val - lowest_val) / (second_low_idx - lowest_idx)
-                    up_intercept = lowest_val - up_slope * lowest_idx
-                    up_line_now = up_slope * (window - 1) + up_intercept
+                if sec_val > lowest_val:
+                    up_slope = (sec_val - lowest_val) / (sec_idx - lowest_idx)
+                    up_line = up_slope * (window - 1) + (lowest_val - up_slope * lowest_idx)
 
-                    if curr_c >= up_line_now:
-                        trend_baslatma_durumu = f"📈 Yeni Yükselen Trend Başlattı! (Dipten Destek: ${up_line_now:,.2f}, Yükselen Dip Onaylı) (Boğa)"
+                    if curr_c >= up_line:
+                        trend_baslatma_durumu = f"📈 Yeni Yükselen Trend Başlattı! (Dipten Destek: ${up_line:,.2f}, Yükselen Dip Onaylı) (Boğa)"
                     else:
                         trend_baslatma_durumu = "Yükselen Trend Desteği Altında (Nötr)"
                 else:
                     trend_baslatma_durumu = "Düşük Dipler Devam Ediyor"
-            else:
-                if curr_c > lowest_val * 1.03:
-                    trend_baslatma_durumu = "⚡ Dipten Hızlı Toparlanma (V Dönüş Başlangıcı) (Boğa)"
+            elif curr_c > lowest_val * 1.03:
+                trend_baslatma_durumu = "⚡ Dipten Hızlı Toparlanma (V Dönüş Başlangıcı) (Boğa)"
 
         return dusen_kirilim_durumu, trend_baslatma_durumu
     except Exception:
@@ -190,69 +216,25 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         return "Standart Mum"
     try:
         sub = df.iloc[-5:]
-        o = sub['Open'].values
-        h = sub['High'].values
-        l = sub['Low'].values
-        c = sub['Close'].values
+        o, h, l, c = sub['Open'].values, sub['High'].values, sub['Low'].values, sub['Close'].values
         body = np.abs(c - o)
-        candle_range = h - l
-        is_bull = c > o
-        is_bear = c < o
-        eps = 1e-10
-        cr = np.where(candle_range == 0, eps, candle_range)
+        cr = np.where((h - l) == 0, 1e-10, h - l)
+        is_bull, is_bear = c > o, c < o
         upper_wick = h - np.maximum(o, c)
         lower_wick = np.minimum(o, c) - l
 
-        # 1. EN YÜKSEK BAŞARI ORANLI YÜKSELİŞ (BOĞA) FORMASYONLARI
-        if (is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and 
-            c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]):
+        if is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]:
             return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş / Boğa) (%84 Başarı)"
-
-        if (is_bull[2] and is_bull[3] and is_bull[4] and 
-            c[4] > c[3] > c[2] and o[3] > o[2] and o[4] > o[3] and
-            upper_wick[2]/cr[2] < 0.25 and upper_wick[3]/cr[3] < 0.25 and upper_wick[4]/cr[4] < 0.25):
+        if is_bull[2] and is_bull[3] and is_bull[4] and c[4] > c[3] > c[2] and o[3] > o[2] and o[4] > o[3] and (upper_wick[2:] / cr[2:] < 0.25).all():
             return "🛡️ Three White Soldiers - Üç Beyaz Asker (Yükseliş Dönüş / Boğa) (%82 Başarı)"
-
-        if (is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l[1], l[2], l[3]) >= l[0]):
+        if is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l[1:4]) >= l[0]:
             return "📈 Rising Three Methods - Yükselen Üç Yöntem (Yükseliş Devam / Boğa) (%78 Başarı)"
-
-        if (is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2):
+        if is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2:
             return "⭐ Morning Doji Star - Sabah Yıldızı (Yükseliş Dönüş / Boğa) (%76 Başarı)"
-
-        if (is_bear[2] and body[3]/cr[3] < 0.15 and is_bull[4] and h[3] < l[2] and l[4] > h[3] and c[4] > (o[2] + c[2])/2):
-            return "👶 Bullish Abandoned Baby - Terk Edilmiş Bebek (Yükseliş Dönüş / Boğa) (%75 Başarı)"
-
-        if (is_bear[2] and is_bull[3] and o[3] <= c[2] and c[3] >= o[2] and is_bull[4] and c[4] > c[3]):
-            return "🟢 Three Outside Up (Yükseliş Dönüş / Boğa) (%72 Başarı)"
-
-        if (is_bear[3] and is_bull[4] and (body[3]/cr[3] > 0.35) and (body[4]/cr[4] > 0.35) and 
-            abs(o[4] - o[3]) / o[3] <= 0.003 and c[4] > h[3]):
-            return "⚡ Bullish Separating Lines - Ayrılan Çizgiler (Yükseliş Devam / Boğa) (%68 Başarı)"
-
-        # 2. EN YÜKSEK BAŞARI ORANLI DÜŞÜŞ (AYI) FORMASYONLARI
-        if (is_bear[2] and is_bear[3] and is_bear[4] and 
-            c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and
-            lower_wick[2]/cr[2] < 0.25 and lower_wick[3]/cr[3] < 0.25 and lower_wick[4]/cr[4] < 0.25):
+        if is_bear[2] and is_bear[3] and is_bear[4] and c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and (lower_wick[2:] / cr[2:] < 0.25).all():
             return "🦅 Three Black Crows - Üç Kara Karga (Düşüş Dönüş / Ayı) (%79 Başarı)"
-
-        if (is_bull[2] and body[3]/cr[3] < 0.15 and is_bear[4] and l[3] > h[2] and h[4] < l[3] and c[4] < (o[2] + c[2])/2):
-            return "👶 Bearish Abandoned Baby - Terk Edilmiş Bebek (Düşüş Dönüş / Ayı) (%75 Başarı)"
-
-        if (is_bull[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o[2] + c[2])/2):
+        if is_bull[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o[2] + c[2])/2:
             return "🌙 Evening Doji Star - Akşam Yıldızı (Düşüş Dönüş / Ayı) (%72 Başarı)"
-
-        if (is_bull[2] and is_bear[3] and o[3] >= c[2] and c[3] <= o[2] and is_bear[4] and c[4] < c[3]):
-            return "🔴 Three Outside Down (Düşüş Dönüş / Ayı) (%72 Başarı)"
-
-        if (is_bear[0] and body[0]/cr[0] > 0.4 and is_bear[4] and c[4] < l[0] and max(h[1], h[2], h[3]) <= h[0]):
-            return "📉 Falling Three Methods - Düşen Üç Yöntem (Düşüş Devam / Ayı) (%71 Başarı)"
-
-        if (is_bear[3] and is_bear[4] and h[3] < l[2] and c[4] < c[3] and o[4] <= o[3]):
-            return "🕳️ Two Black Gapping - Boşluklu İki Kırmızı (Düşüş Devam / Ayı) (%68 Başarı)"
-
-        if (is_bull[1] and is_bull[2] and is_bull[3] and is_bear[4] and 
-            c[3] > c[2] > c[1] and o[4] >= c[3] and c[4] <= o[1]):
-            return "⚔️ Bearish Three-Line Strike (Düşüş Dönüş / Ayı) (%65 Başarı)"
 
         return "Standart Mum"
     except Exception:
@@ -262,13 +244,8 @@ def detect_ict_smc_models(df: pd.DataFrame) -> str:
     if df is None or len(df) < 25:
         return "Belirsiz"
     try:
-        high = df['High'].values
-        low = df['Low'].values
-        close = df['Close'].values
-        opens = df['Open'].values
-        curr_c = close[-1]
-        curr_h = high[-1]
-        curr_l = low[-1]
+        high, low, close, opens = df['High'].values, df['Low'].values, df['Close'].values, df['Open'].values
+        curr_c, curr_h, curr_l = close[-1], high[-1], low[-1]
 
         swing_low = np.min(low[-16:-2])
         if (low[-2] < swing_low and close[-2] > swing_low) or (curr_l < swing_low and curr_c > swing_low):
@@ -278,12 +255,10 @@ def detect_ict_smc_models(df: pd.DataFrame) -> str:
         if (high[-2] > swing_high and close[-2] < swing_high) or (curr_h > swing_high and curr_c < swing_high):
             return "🧲 Buy-Side Liquidity Sweep (Tepe Likiditesi Alındı) (Ayı)"
 
-        if low[-2] > high[-4]:
-            if high[-4] <= curr_l <= low[-2] or high[-4] <= curr_c <= low[-2]:
-                return "⚡ Bullish FVG (Dengesizlik Boşluğu Test Ediliyor) (Boğa)"
-        if high[-2] < low[-4]:
-            if high[-2] <= curr_h <= low[-4] or high[-2] <= curr_c <= low[-4]:
-                return "⚡ Bearish FVG (Satış Dengesizliği Test Ediliyor) (Ayı)"
+        if low[-2] > high[-4] and (high[-4] <= curr_l <= low[-2] or high[-4] <= curr_c <= low[-2]):
+            return "⚡ Bullish FVG (Dengesizlik Boşluğu Test Ediliyor) (Boğa)"
+        if high[-2] < low[-4] and (high[-2] <= curr_h <= low[-4] or high[-2] <= curr_c <= low[-4]):
+            return "⚡ Bearish FVG (Satış Dengesizliği Test Ediliyor) (Ayı)"
 
         for i in range(2, 6):
             if close[-i] > opens[-i] and (close[-i] - opens[-i]) > np.std(np.abs(close - opens)) * 1.5:
@@ -291,99 +266,34 @@ def detect_ict_smc_models(df: pd.DataFrame) -> str:
                 if low[ob_idx] <= curr_l <= high[ob_idx] or low[ob_idx] <= curr_c <= high[ob_idx]:
                     return "🧱 Bullish Order Block (OB Kurumsal Alım Bölgesi) (Boğa)"
 
-        recent_min = np.min(low[-20:])
-        recent_max = np.max(high[-20:])
-        rng = recent_max - recent_min
-        if rng > 0:
-            fib_62 = recent_max - rng * 0.62
-            fib_79 = recent_max - rng * 0.79
-            if fib_79 <= curr_c <= fib_62:
-                return "🎯 OTE (%62 - %79 Optimal Giriş Bölgesi) (Boğa)"
-
         return "Normal Fiyat Yapısı"
     except Exception:
         return "Normal Fiyat Yapısı"
 
-def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min_dist_pct: float = 0.6):
-    try:
-        close = df['Close'].squeeze()
-        high = df['High'].squeeze()
-        low = df['Low'].squeeze()
-        curr_price = float(close.iloc[idx])
-        window = min(lookback, len(df))
-        sub_high = high.iloc[-window:].values
-        sub_low = low.iloc[-window:].values
-        res_peaks = []
-        sup_troughs = []
-        k = 3
-        for i in range(k, len(sub_high) - k):
-            if all(sub_high[i] >= sub_high[i-j] for j in range(1, k+1)) and all(sub_high[i] >= sub_high[i+j] for j in range(1, k+1)):
-                dist = ((sub_high[i] - curr_price) / curr_price) * 100
-                if dist >= min_dist_pct:
-                    res_peaks.append(sub_high[i])
-            if all(sub_low[i] <= sub_low[i-j] for j in range(1, k+1)) and all(sub_low[i] <= sub_low[i+j] for j in range(1, k+1)):
-                dist = ((curr_price - sub_low[i]) / curr_price) * 100
-                if dist >= min_dist_pct:
-                    sup_troughs.append(sub_low[i])
-
-        if res_peaks:
-            resistance = float(min(res_peaks))
-        else:
-            resistance = float(np.max(sub_high))
-            if ((resistance - curr_price) / curr_price) * 100 < min_dist_pct:
-                resistance = curr_price * (1 + min_dist_pct / 100)
-
-        if sup_troughs:
-            support = float(max(sup_troughs))
-        else:
-            support = float(np.min(sub_low))
-            if ((curr_price - support) / curr_price) * 100 < min_dist_pct:
-                support = curr_price * (1 - min_dist_pct / 100)
-
-        dist_sup = ((support - curr_price) / curr_price) * 100
-        dist_res = ((resistance - curr_price) / curr_price) * 100
-        return support, resistance, dist_sup, dist_res
-    except Exception:
-        return None, None, 0.0, 0.0
-
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, candle_pat: str, dusen_trend: str, yeni_trend: str):
     try:
         vol = df['Volume'].squeeze()
         if isinstance(vol, pd.DataFrame):
             vol = vol.iloc[:, 0]
 
-        # Son 20 tamamlanmış mumun ortalama hacmini hesapla (0 olmayanlar)
         window = 20
         past_vols = vol.iloc[-window-1:-1] if len(vol) > window + 1 else vol.iloc[:-1]
         valid_past = past_vols[past_vols > 0]
         avg_vol = float(valid_past.mean()) if len(valid_past) > 0 else float(vol[vol > 0].mean()) if len(vol[vol > 0]) > 0 else 1.0
 
-        # Canlı mum hacmi
         raw_curr_vol = float(vol.iloc[idx]) if len(vol) > 0 else 0.0
-
-        # Yahoo Finance canlı mumda (idx = -1) genellikle 0 hacim döndürür.
-        # Bu durumda sinyali başlatan son kapanmış mumun (-2) hacmi baz alınır.
         if (raw_curr_vol <= 0 or np.isnan(raw_curr_vol)) and len(vol) >= 2:
             eval_vol = float(vol.iloc[-2])
         else:
             eval_vol = raw_curr_vol
 
-        # Eğer canlı mumda hacim varsa ancak mum yeni açılmışsa geçen süreye göre normalize et
         if eval_vol > 0 and idx == -1 and raw_curr_vol > 0:
             candle_time = df.index[-1]
             now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
             elapsed_sec = (now_tsi - candle_time).total_seconds()
-            
-            # Zaman dilimi süresini tespit et (örneğin 15 dk veya 30 dk)
-            if len(df.index) >= 2:
-                tf_sec = max(60.0, (df.index[-1] - df.index[-2]).total_seconds())
-            else:
-                tf_sec = 900.0
-
+            tf_sec = max(60.0, (df.index[-1] - df.index[-2]).total_seconds()) if len(df.index) >= 2 else 900.0
             ratio = min(max(elapsed_sec / tf_sec, 0.1), 1.0)
-            projected_vol = eval_vol / ratio
-            # Aşırı uç değerleri sınırla
-            eval_vol = min(projected_vol, eval_vol * 4.0)
+            eval_vol = min(eval_vol / ratio, eval_vol * 4.0)
 
         rvol = eval_vol / avg_vol if avg_vol > 0 else 1.0
 
@@ -413,13 +323,12 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
                 puan += 1
 
         puan = min(puan, 5)
-        yildizlar = "⭐" * puan
-        skor_metni = f"{yildizlar} ({puan}/5)"
+        skor_metni = f"{'⭐' * puan} ({puan}/5)"
         return hacim_metni, skor_metni
     except Exception:
         return "⚪ Normal (Ortalamanın 1.0x Katı)", "⭐⭐⭐ (3/5)"
 
-def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
+def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict, pivots: dict = None):
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -428,35 +337,25 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     low = df['Low'].squeeze()
     close = df['Close'].squeeze()
     prev_close = close.shift(1)
-    tr1 = high - low
-    tr2 = (high - prev_close).abs()
-    tr3 = (low - prev_close).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
 
     hiDiff = high - high.shift(1)
     loDiff = low.shift(1) - low
     plusDM = pd.Series(np.where((hiDiff > loDiff) & (hiDiff > 0), hiDiff, 0.0), index=df.index)
     minusDM = pd.Series(np.where((loDiff > hiDiff) & (loDiff > 0), loDiff, 0.0), index=df.index)
 
-    DMIlength = 10
-    Stolength = 3
-    ATR = wwma(tr, DMIlength)
-    PlusDI = 100 * wwma(plusDM, DMIlength) / ATR.replace(0, 1e-10)
-    MinusDI = 100 * wwma(minusDM, DMIlength) / ATR.replace(0, 1e-10)
+    ATR = wwma(tr, 10)
+    PlusDI = 100 * wwma(plusDM, 10) / ATR.replace(0, 1e-10)
+    MinusDI = 100 * wwma(minusDM, 10) / ATR.replace(0, 1e-10)
     osc = PlusDI - MinusDI
 
-    hi = osc.rolling(window=Stolength).max()
-    lo = osc.rolling(window=Stolength).min()
-    sum_osc_lo = (osc - lo).rolling(window=Stolength).sum()
-    sum_hi_lo = (hi - lo).rolling(window=Stolength).sum()
-    denom = sum_hi_lo.replace(0, 1e-10)
-    stoch = (sum_osc_lo / denom) * 100
-    stoch = stoch.clip(lower=0, upper=100).ffill().fillna(50.0)
+    hi = osc.rolling(window=3).max()
+    lo = osc.rolling(window=3).min()
+    stoch = (((osc - lo).rolling(window=3).sum() / (hi - lo).rolling(window=3).sum().replace(0, 1e-10)) * 100).clip(0, 100).ffill().fillna(50.0)
 
     c_prev = float(stoch.iloc[-2])
     c_curr = float(stoch.iloc[-1])
 
-    sig_type = None
     if c_prev < 10 and c_curr > 10:
         sig_type = "BUY"
     elif c_prev > 90 and c_curr < 90:
@@ -483,19 +382,24 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     candle_pat = detect_candlestick_patterns(df)
     smc_model = detect_ict_smc_models(df)
 
-    sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, candle_pat, dusen_trend, yeni_trend)
 
     ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
     ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
     ss_4h_k, ss_4h_n = ss_multi.get("4h", ("Belirsiz", "Belirsiz"))
 
-    sr_metni = ""
-    if sup is not None and res is not None:
-        sr_metni = (
-            f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
-            f"▫️ <b>Ana Destek:</b> ${sup:,.2f} (<code>{d_sup:+.1f}%</code>)\n"
-            f"▫️ <b>Ana Direnç:</b> ${res:,.2f} (<code>{d_res:+.1f}%</code>)"
+    pivot_metni = ""
+    if pivots and "P" in pivots:
+        p = pivots["P"]
+        p_label = pivots.get("label", "Günlük")
+        dist_p = ((candle_price - p) / p) * 100
+        durum = "🟢 Pivot Üzerinde (Boğa)" if candle_price >= p else "🔴 Pivot Altında (Ayı)"
+        pivot_metni = (
+            f"\n\n<b>🎯 Pivot Noktaları Standart (Woodie - {p_label}):</b>\n"
+            f"▫️ <b>Konum:</b> {durum} (<code>{dist_p:+.2f}%</code>)\n"
+            f"▫️ <b>Pivot (P):</b> ${p:,.2f}\n"
+            f"▫️ <b>Dirençler:</b> R1: ${pivots.get('R1', 0):,.2f} | R2: ${pivots.get('R2', 0):,.2f} | R3: ${pivots.get('R3', 0):,.2f}\n"
+            f"▫️ <b>Destekler:</b> S1: ${pivots.get('S1', 0):,.2f} | S2: ${pivots.get('S2', 0):,.2f} | S3: ${pivots.get('S3', 0):,.2f}"
         )
 
     tag = "🟢 <b>ABD BORSASI AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>ABD BORSASI SAT SİNYALİ</b>"
@@ -517,7 +421,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
         f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
         f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
         f"▫️ <b>4 Saat (4h):</b> {ss_4h_k} Kanal | {ss_4h_n} Nokta"
-        f"{sr_metni}"
+        f"{pivot_metni}"
     )
 
 def scan_ticker(symbol: str):
@@ -534,19 +438,45 @@ def scan_ticker(symbol: str):
             'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
         }).dropna()
 
+        # Günlük ve Haftalık Veriler (Pivot Hesaplaması İçin)
+        df_daily = yf.download(symbol, period="1mo", interval="1d", progress=False)
+        clean_daily = clean_df(df_daily)
+        if clean_daily.empty or len(clean_daily) < 2:
+            clean_daily = clean_1h.resample('1D').agg({
+                'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
+            }).dropna()
+
         ss_multi = {
             "15m": calculate_slingshot(clean_15m, -1),
             "1h": calculate_slingshot(clean_1h, -1),
             "4h": calculate_slingshot(df_4h, -1)
         }
 
+        # TradingView Pivot Points Standard Mantığı:
+        # 15m (<= 15m) için Günlük / 1D anchor
+        pivots_15m = calculate_woodie_pivots(clean_daily, label="Günlük / 1D")
+
+        # 30m için Auto modunda Haftalık (1W), Daily modunda Günlük (1D)
+        if PIVOT_ANCHOR_MODE == "Daily":
+            pivots_30m = calculate_woodie_pivots(clean_daily, label="Günlük / 1D")
+        else:
+            df_weekly = yf.download(symbol, period="3mo", interval="1wk", progress=False)
+            clean_weekly = clean_df(df_weekly)
+            if clean_weekly.empty or len(clean_weekly) < 2:
+                clean_weekly = clean_daily.resample('W-FRI').agg({
+                    'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
+                }).dropna()
+            pivots_30m = calculate_woodie_pivots(clean_weekly, label="Haftalık / 1W")
+
         # 15 Dakika (15m) canlı mum taraması
-        s15m = evaluate_eco(clean_15m, symbol, "15 Dakika (15m)", ss_multi)
-        if s15m: signals.append(s15m)
+        s15m = evaluate_eco(clean_15m, symbol, "15 Dakika (15m)", ss_multi, pivots=pivots_15m)
+        if s15m: 
+            signals.append(s15m)
 
         # 30 Dakika (30m) canlı mum taraması
-        s30m = evaluate_eco(clean_30m, symbol, "30 Dakika (30m)", ss_multi)
-        if s30m: signals.append(s30m)
+        s30m = evaluate_eco(clean_30m, symbol, "30 Dakika (30m)", ss_multi, pivots=pivots_30m)
+        if s30m: 
+            signals.append(s30m)
 
     except Exception as e:
         print(f"{symbol} analiz hatası: {e}")
@@ -563,7 +493,8 @@ def main():
         for future in as_completed(futures):
             try:
                 results = future.result()
-                if results: all_signals.extend(results)
+                if results: 
+                    all_signals.extend(results)
             except Exception as e:
                 print(f"Hisse analiz hatası: {e}")
     for i, sig in enumerate(all_signals):
