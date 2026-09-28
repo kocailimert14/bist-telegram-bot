@@ -50,7 +50,12 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+        if 'Close' in df.columns.get_level_values(0):
+            df.columns = df.columns.get_level_values(0)
+        elif len(df.columns.levels) > 1 and 'Close' in df.columns.get_level_values(1):
+            df.columns = df.columns.get_level_values(1)
+        else:
+            df.columns = df.columns.get_level_values(0)
     df = df.dropna(subset=['High', 'Low', 'Close'])
     if getattr(df.index, 'tz', None) is not None:
         df.index = df.index.tz_convert('Europe/Istanbul')
@@ -66,14 +71,13 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
         res[i] = (prev * (length - 1) + vals[i]) / length
     return pd.Series(res, index=series.index)
 
-def calculate_woodie_pivot(df: pd.DataFrame):
-    """Taranan zaman diliminin Woodie Pivot seviyelerini hesaplar."""
-    if df is None or len(df) < 5:
+def calculate_woodie_pivot_htf(df_htf: pd.DataFrame, curr_price: float):
+    if df_htf is None or len(df_htf) < 2:
         return None
     try:
-        prev_h = float(df['High'].iloc[-2])
-        prev_l = float(df['Low'].iloc[-2])
-        curr_o = float(df['Open'].iloc[-1])
+        prev_h = float(df_htf['High'].iloc[-2])
+        prev_l = float(df_htf['Low'].iloc[-2])
+        curr_o = float(df_htf['Open'].iloc[-1])
 
         p = (prev_h + prev_l + 2.0 * curr_o) / 4.0
         r1 = 2.0 * p - prev_l
@@ -83,10 +87,9 @@ def calculate_woodie_pivot(df: pd.DataFrame):
         r3 = prev_h + 2.0 * (p - prev_l)
         s3 = prev_l - 2.0 * (prev_h - p)
 
-        curr_p = float(df['Close'].iloc[-1])
         return {
             "P": p, "R1": r1, "S1": s1, "R2": r2, "S2": s2, "R3": r3, "S3": s3,
-            "dist_P": ((p - curr_p) / curr_p) * 100.0
+            "dist_P": ((p - curr_price) / curr_price) * 100.0
         }
     except Exception:
         return None
@@ -294,7 +297,7 @@ def detect_harmonic_patterns(df: pd.DataFrame, deviation_pct: float = 1.8) -> st
                 pivots.append((idx_l, 'L', last_l))
                 trend, last_h, idx_h = 1, h, i
             elif trend >= 0 and l <= last_h * (1 - deviation_pct / 100):
-                pivots.append((idx_h, 'H', last_h))
+                pivots.append((idx_l, 'H', last_h))
                 trend, last_l, idx_l = -1, l, i
             else:
                 if h > last_h: last_h, idx_h = h, i
@@ -468,10 +471,9 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
         return "⚪ Normal", "⭐⭐⭐ (3/5)"
 
 def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
-    df = clean_df(df_1h)
-    if df.empty or len(df) < 15:
+    if df_1h.empty or len(df_1h) < 15:
         return pd.DataFrame()
-    df_copy = df.copy()
+    df_copy = df_1h.copy()
     df_copy['date'] = df_copy.index.date
     df_copy['half'] = np.where(df_copy.index.hour < 13, 1, 2)
     df_4h = df_copy.groupby(['date', 'half']).agg({
@@ -484,9 +486,8 @@ def make_bist_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
     df_4h.index = pd.DatetimeIndex(new_idx)
     return df_4h
 
-def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
-    df = clean_df(df)
-    if df.empty or len(df) < 15:
+def evaluate_eco(df: pd.DataFrame, df_htf: pd.DataFrame, symbol: str, tf_label: str, pivot_label: str, ss_multi: dict):
+    if df is None or df.empty or len(df) < 15:
         return None
 
     high = df['High'].squeeze()
@@ -547,7 +548,8 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     candle_pat = detect_candlestick_patterns(df)
     harmonic_pat = detect_harmonic_patterns(df)
     smc_model = detect_ict_smc_models(df)
-    woodie = calculate_woodie_pivot(df)
+    
+    woodie = calculate_woodie_pivot_htf(df_htf, candle_price)
 
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
     hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend, harmonic_pat, woodie)
@@ -568,7 +570,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     if woodie:
         p_durum = "Üzerinde (Boğa)" if candle_price >= woodie["P"] else "Altında (Ayı)"
         woodie_metni = (
-            f"\n\n<b>📐 Woodie Pivot Seviyeleri ({tf_label}):</b>\n"
+            f"\n\n<b>📐 Woodie Pivot Seviyeleri ({pivot_label}):</b>\n"
             f"▫️ <b>Pivot (P):</b> {woodie['P']:.2f} TL (<code>{woodie['dist_P']:+.1f}%</code>) - {p_durum}\n"
             f"▫️ <b>Dirençler:</b> R1: {woodie['R1']:.2f} TL | R2: {woodie['R2']:.2f} TL\n"
             f"▫️ <b>Destekler:</b> S1: {woodie['S1']:.2f} TL | S2: {woodie['S2']:.2f} TL"
@@ -600,29 +602,32 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
 
 def analyze_ticker(symbol: str, scan_1h: bool, scan_4h: bool, scan_1d: bool):
     signals = []
-    df_1h, df_4h, df_15m = None, None, None
     try:
-        df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
-        clean_1h = clean_df(df_1h)
-        df_4h = make_bist_4h(clean_1h)
-        df_15m = yf.download(symbol, period="5d", interval="15m", progress=False)
-        clean_15m = clean_df(df_15m)
+        df_1h = clean_df(yf.download(symbol, period="2mo", interval="1h", progress=False))
+        df_4h = make_bist_4h(df_1h)
+        df_15m = clean_df(yf.download(symbol, period="5d", interval="15m", progress=False))
+        
+        # TradingView Pivot kaynakları (1h ve 4h için Haftalık 1wk)
+        df_1w = clean_df(yf.download(symbol, period="3mo", interval="1wk", progress=False))
 
         ss_multi = {
-            "15m": calculate_slingshot(clean_15m, -1),
-            "1h": calculate_slingshot(clean_1h, -1),
+            "15m": calculate_slingshot(df_15m, -1),
+            "1h": calculate_slingshot(df_1h, -1),
             "4h": calculate_slingshot(df_4h, -1)
         }
-    except Exception:
-        ss_multi = {"15m": ("Belirsiz", "Belirsiz"), "1h": ("Belirsiz", "Belirsiz"), "4h": ("Belirsiz", "Belirsiz")}
 
-    if scan_1h and clean_1h is not None and not clean_1h.empty:
-        s1h = evaluate_eco(clean_1h, symbol, "1 Saat (1h)", ss_multi)
-        if s1h: signals.append(s1h)
+        # 1 Saat (1h) -> TradingView Auto kuralı gereği Haftalık (1W) Woodie Pivot
+        if scan_1h and df_1h is not None and not df_1h.empty:
+            s1h = evaluate_eco(df_1h, df_1w, symbol, "1 Saat (1h)", "Haftalık (1W)", ss_multi)
+            if s1h: signals.append(s1h)
 
-    if scan_4h and df_4h is not None and not df_4h.empty:
-        s4h = evaluate_eco(df_4h, symbol, "4 Saat (4h)", ss_multi)
-        if s4h: signals.append(s4h)
+        # 4 Saat (4h) -> TradingView Auto kuralı gereği Haftalık (1W) Woodie Pivot
+        if scan_4h and df_4h is not None and not df_4h.empty:
+            s4h = evaluate_eco(df_4h, df_1w, symbol, "4 Saat (4h)", "Haftalık (1W)", ss_multi)
+            if s4h: signals.append(s4h)
+
+    except Exception as e:
+        print(f"{symbol} analiz hatası: {e}")
 
     return signals
 
