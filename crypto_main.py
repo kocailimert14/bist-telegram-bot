@@ -24,7 +24,6 @@ COINS = [
 ]
 
 def fmt_price(val: float) -> str:
-    """Kripto fiyatlarını basamak hassasiyetine göre dinamik formatlar."""
     if val is None:
         return "0.00"
     if abs(val) < 0.1:
@@ -56,7 +55,6 @@ def send_telegram(message: str) -> bool:
         return False
 
 def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
-    """Canlı Binance resmi API endpoint'lerinden çeker, hata durumunda Bybit'e geçer."""
     endpoints = [
         f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
         f"https://api1.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
@@ -121,10 +119,6 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
     return pd.Series(res, index=series.index)
 
 def calculate_woodie_pivot_htf(df_htf: pd.DataFrame, curr_price: float):
-    """
-    TradingView Pivot Points Standard (Woodie) Formülü:
-    P = (prevHigh + prevLow + 2 * currOpen) / 4
-    """
     if df_htf is None or len(df_htf) < 2:
         return None
     try:
@@ -350,7 +344,7 @@ def detect_harmonic_patterns(df: pd.DataFrame, deviation_pct: float = 1.8) -> st
                 pivots.append((idx_l, 'L', last_l))
                 trend, last_h, idx_h = 1, h, i
             elif trend >= 0 and l <= last_h * (1 - deviation_pct / 100):
-                pivots.append((idx_h, 'H', last_h))
+                pivots.append((idx_l, 'H', last_h))
                 trend, last_l, idx_l = -1, l, i
             else:
                 if h > last_h: last_h, idx_h = h, i
@@ -645,11 +639,13 @@ def scan_coin(symbol: str):
         df_1h = get_binance_klines(symbol, "1h")
         df_4h = get_binance_klines(symbol, "4h")
         
-        # TradingView Pivot kaynakları (15m ve 1h için Günlük 1D, 4h için Haftalık 1W)
+        # TradingView Pivot kaynakları:
+        # <=15m grafikleri -> 1D (Günlük)
+        # >15m grafikleri (1h, 4h) -> 1W (Haftalık)
         df_1d = get_binance_klines(symbol, "1d")
         df_1w = get_binance_klines(symbol, "1w")
 
-        df_htf_4h = df_1w if (df_1w is not None and len(df_1w) >= 2) else df_1d
+        df_htf_week = df_1w if (df_1w is not None and len(df_1w) >= 2) else df_1d
 
         ss_multi = {
             "15m": calculate_slingshot(df_15m, -1),
@@ -657,16 +653,16 @@ def scan_coin(symbol: str):
             "4h": calculate_slingshot(df_4h, -1)
         }
 
-        # 15m taraması: TradingView 15m grafiğindeki Günlük Woodie Pivot'u kullanır (ETH: 2688.81)
-        s15m = evaluate_eco_crypto(df_15m, df_1d, symbol, "15 Dakika (15m)", "Günlük / 15m Grafiği", ss_multi)
+        # 15m taraması -> TradingView 15m grafiğindeki Günlük (1D) Woodie Pivot
+        s15m = evaluate_eco_crypto(df_15m, df_1d, symbol, "15 Dakika (15m)", "Günlük (1D)", ss_multi)
         if s15m: signals.append(s15m)
 
-        # 1h taraması: Günlük Woodie Pivot'u kullanır
-        s1h = evaluate_eco_crypto(df_1h, df_1d, symbol, "1 Saat (1h)", "Günlük / 1h Grafiği", ss_multi)
+        # 1h taraması -> TradingView 1h grafiğindeki Haftalık (1W) Woodie Pivot
+        s1h = evaluate_eco_crypto(df_1h, df_htf_week, symbol, "1 Saat (1h)", "Haftalık (1W)", ss_multi)
         if s1h: signals.append(s1h)
 
-        # 4h taraması: TradingView 4h grafiğindeki Haftalık Woodie Pivot'u kullanır (SUSDT: 0.03680)
-        s4h = evaluate_eco_crypto(df_4h, df_htf_4h, symbol, "4 Saat (4h)", "Haftalık / 4h Grafiği", ss_multi)
+        # 4h taraması -> TradingView 4h grafiğindeki Haftalık (1W) Woodie Pivot
+        s4h = evaluate_eco_crypto(df_4h, df_htf_week, symbol, "4 Saat (4h)", "Haftalık (1W)", ss_multi)
         if s4h: signals.append(s4h)
 
     except Exception as e:
