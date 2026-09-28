@@ -3,9 +3,9 @@ name: Kripto Evan Cabral Tarayıcı
 on:
   workflow_dispatch:
   schedule:
-    # Sabah 08:00 ile gece 23:59 TSİ arasında her 15 dakikada bir çalışır (05:00 - 20:59 UTC)
+    # Sabah 08:00 ile gece 23:59 TSİ arasında her saatin 10, 25, 40 ve 55. dakikalarında çalışır (05:00 - 20:59 UTC)
     # Gece 00:00 ile 08:00 TSİ arası tamamen durur
-    - cron: '*/15 5-20 * * *'
+    - cron: '10,25,40,55 5-20 * * *'
 
 jobs:
   kripto_tarama:
