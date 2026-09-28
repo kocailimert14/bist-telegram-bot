@@ -23,18 +23,6 @@ COINS = [
     "SANDUSDT", "ZECUSDT", "HYPEUSDT", "GRAMUSDT", "SUSDT"
 ]
 
-def fmt_price(val: float) -> str:
-    if val is None:
-        return "0.00"
-    if abs(val) < 0.1:
-        return f"{val:.5f}"
-    elif abs(val) < 1.0:
-        return f"{val:.4f}"
-    elif abs(val) < 100.0:
-        return f"{val:,.3f}"
-    else:
-        return f"{val:,.2f}"
-
 def send_telegram(message: str) -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
@@ -55,40 +43,34 @@ def send_telegram(message: str) -> bool:
         return False
 
 def get_binance_klines(symbol: str, interval: str) -> pd.DataFrame:
-    endpoints = [
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
-        f"https://api1.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
-        f"https://api3.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit=200",
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
-    ]
-    for url in endpoints:
-        try:
-            res = requests.get(url, timeout=5)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, list) and len(data) >= 5:
-                    df = pd.DataFrame(data, columns=[
-                        'time', 'Open', 'High', 'Low', 'Close', 'Volume', 
-                        'close_time', 'qav', 'num_trades', 'tbv', 'tqv', 'ignore'
-                    ])
-                    df['Open'] = df['Open'].astype(float)
-                    df['High'] = df['High'].astype(float)
-                    df['Low'] = df['Low'].astype(float)
-                    df['Close'] = df['Close'].astype(float)
-                    df['Volume'] = df['Volume'].astype(float)
-                    df.index = pd.to_datetime(df['time'], unit='ms') + pd.Timedelta(hours=3)
-                    return df
-        except Exception:
-            continue
+    url_binance = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
+    try:
+        res = requests.get(url_binance, timeout=8)
+        if res.status_code == 200:
+            data = res.json()
+            if isinstance(data, list) and len(data) >= 20:
+                df = pd.DataFrame(data, columns=[
+                    'time', 'Open', 'High', 'Low', 'Close', 'Volume', 
+                    'close_time', 'qav', 'num_trades', 'tbv', 'tqv', 'ignore'
+                ])
+                df['Open'] = df['Open'].astype(float)
+                df['High'] = df['High'].astype(float)
+                df['Low'] = df['Low'].astype(float)
+                df['Close'] = df['Close'].astype(float)
+                df['Volume'] = df['Volume'].astype(float)
+                df.index = pd.to_datetime(df['time'], unit='ms') + pd.Timedelta(hours=3)
+                return df
+    except Exception:
+        pass
 
-    interval_map = {"15m": "15", "1h": "60", "4h": "240", "1d": "D", "1w": "W"}
+    interval_map = {"15m": "15", "1h": "60", "4h": "240"}
     bb_int = interval_map.get(interval, "60")
     url_bybit = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={symbol}&interval={bb_int}&limit=200"
     try:
         res = requests.get(url_bybit, timeout=8)
         if res.status_code == 200:
             raw_list = res.json().get('result', {}).get('list', [])
-            if raw_list and len(raw_list) >= 5:
+            if raw_list and len(raw_list) >= 20:
                 raw_list = raw_list[::-1]
                 df = pd.DataFrame(raw_list, columns=['time', 'Open', 'High', 'Low', 'Close', 'Volume', 'turn'])
                 df['Open'] = df['Open'].astype(float)
@@ -108,7 +90,8 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
-    return df.dropna(subset=['High', 'Low', 'Close'])
+    df = df.dropna(subset=['High', 'Low', 'Close'])
+    return df
 
 def wwma(series: pd.Series, length: int) -> pd.Series:
     vals = series.fillna(0.0).values
@@ -117,29 +100,6 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
         prev = res[i-1] if i > 0 else 0.0
         res[i] = (prev * (length - 1) + vals[i]) / length
     return pd.Series(res, index=series.index)
-
-def calculate_woodie_pivot_htf(df_htf: pd.DataFrame, curr_price: float):
-    if df_htf is None or len(df_htf) < 2:
-        return None
-    try:
-        prev_h = float(df_htf['High'].iloc[-2])
-        prev_l = float(df_htf['Low'].iloc[-2])
-        curr_o = float(df_htf['Open'].iloc[-1])
-
-        p = (prev_h + prev_l + 2.0 * curr_o) / 4.0
-        r1 = 2.0 * p - prev_l
-        s1 = 2.0 * p - prev_h
-        r2 = p + (prev_h - prev_l)
-        s2 = p - (prev_h - prev_l)
-        r3 = prev_h + 2.0 * (p - prev_l)
-        s3 = prev_l - 2.0 * (prev_h - p)
-
-        return {
-            "P": p, "R1": r1, "S1": s1, "R2": r2, "S2": s2, "R3": r3, "S3": s3,
-            "dist_P": ((p - curr_price) / curr_price) * 100.0
-        }
-    except Exception:
-        return None
 
 def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
     if df is None or len(df) < 15:
@@ -220,13 +180,13 @@ def detect_diagonal_trendline_and_initiation(df: pd.DataFrame, lookback: int = 4
 
                 if curr_c > line_val_now:
                     if sub_c[-2] <= line_val_prev or (curr_c - line_val_now) / line_val_now <= 0.04:
-                        dusen_kirilim_durumu = f"✅ Düşen Trend Çizgisi Yukarı Kırıldı! (Trend: ${fmt_price(line_val_now)}) (Boğa)"
+                        dusen_kirilim_durumu = f"✅ Düşen Trend Çizgisi Yukarı Kırıldı! (Trend: ${line_val_now:,.2f}) (Boğa)"
                     else:
-                        dusen_kirilim_durumu = f"🚀 Düşen Trend Üzerinde Seyrediyor (Trend: ${fmt_price(line_val_now)}) (Boğa)"
+                        dusen_kirilim_durumu = f"🚀 Düşen Trend Üzerinde Seyrediyor (Trend: ${line_val_now:,.2f}) (Boğa)"
                 elif curr_h >= line_val_now and curr_c <= line_val_now:
-                    dusen_kirilim_durumu = f"⚠️ Düşen Trend Çizgisi Test Ediliyor (Direnç: ${fmt_price(line_val_now)}) (Nötr)"
+                    dusen_kirilim_durumu = f"⚠️ Düşen Trend Çizgisi Test Ediliyor (Direnç: ${line_val_now:,.2f}) (Nötr)"
                 else:
-                    dusen_kirilim_durumu = f"Düşen Trend Altında (Direnç: ${fmt_price(line_val_now)})"
+                    dusen_kirilim_durumu = f"Düşen Trend Altında (Direnç: ${line_val_now:,.2f})"
 
         lowest_idx = np.argmin(sub_l[:-2])
         lowest_val = sub_l[lowest_idx]
@@ -247,7 +207,7 @@ def detect_diagonal_trendline_and_initiation(df: pd.DataFrame, lookback: int = 4
                     up_line_now = up_slope * (window - 1) + up_intercept
 
                     if curr_c >= up_line_now:
-                        trend_baslatma_durumu = f"📈 Yeni Yükselen Trend Başlattı! (Dipten Destek: ${fmt_price(up_line_now)}, Yükselen Dip Onaylı) (Boğa)"
+                        trend_baslatma_durumu = f"📈 Yeni Yükselen Trend Başlattı! (Dipten Destek: ${up_line_now:,.2f}, Yükselen Dip Onaylı) (Boğa)"
                     else:
                         trend_baslatma_durumu = "Yükselen Trend Desteği Altında (Nötr)"
                 else:
@@ -278,6 +238,7 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         upper_wick = h - np.maximum(o, c)
         lower_wick = np.minimum(o, c) - l
 
+        # 1. EN YÜKSEK BAŞARI ORANLI YÜKSELİŞ (BOĞA) FORMASYONLARI
         if (is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and 
             c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]):
             return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş / Boğa) (%84 Başarı)"
@@ -303,6 +264,7 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
             abs(o[4] - o[3]) / o[3] <= 0.003 and c[4] > h[3]):
             return "⚡ Bullish Separating Lines - Ayrılan Çizgiler (Yükseliş Devam / Boğa) (%68 Başarı)"
 
+        # 2. EN YÜKSEK BAŞARI ORANLI DÜŞÜŞ (AYI) FORMASYONLARI
         if (is_bear[2] and is_bear[3] and is_bear[4] and 
             c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and
             lower_wick[2]/cr[2] < 0.25 and lower_wick[3]/cr[3] < 0.25 and lower_wick[4]/cr[4] < 0.25):
@@ -330,60 +292,6 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         return "Standart Mum"
     except Exception:
         return "Standart Mum"
-
-def detect_harmonic_patterns(df: pd.DataFrame, deviation_pct: float = 1.8) -> str:
-    if df is None or len(df) < 30:
-        return "Harmonik Formasyon Yok"
-    try:
-        highs, lows, closes = df['High'].values, df['Low'].values, df['Close'].values
-        trend, last_h, last_l, idx_h, idx_l = 0, highs[0], lows[0], 0, 0
-        pivots = []
-        for i in range(1, len(df)):
-            h, l = highs[i], lows[i]
-            if trend <= 0 and h >= last_l * (1 + deviation_pct / 100):
-                pivots.append((idx_l, 'L', last_l))
-                trend, last_h, idx_h = 1, h, i
-            elif trend >= 0 and l <= last_h * (1 - deviation_pct / 100):
-                pivots.append((idx_l, 'H', last_h))
-                trend, last_l, idx_l = -1, l, i
-            else:
-                if h > last_h: last_h, idx_h = h, i
-                if l < last_l: last_l, idx_l = l, i
-        pivots.append((idx_h, 'H', last_h) if trend == 1 else (idx_l, 'L', last_l))
-
-        PATTERNS = [
-            ("Bat (Yarasa)", 0.35, 0.55, 0.886, 0.08, "🦇", 85),
-            ("Gartley 222", 0.58, 0.65, 0.786, 0.08, "📐", 75),
-            ("Butterfly (Kelebek)", 0.72, 0.82, 1.272, 0.15, "🦋", 78),
-            ("Crab (Yengeç)", 0.35, 0.65, 1.618, 0.15, "🦀", 80),
-            ("Shark (Köpekbalığı)", 0.40, 0.90, 0.886, 0.12, "🦈", 75)
-        ]
-
-        def eval_xabcd(pX, pA, pB, pC, d_price):
-            is_bull = (pX[1] == 'L' and pA[1] == 'H' and pB[1] == 'L' and pC[1] == 'H')
-            is_bear = (pX[1] == 'H' and pA[1] == 'L' and pB[1] == 'H' and pC[1] == 'L')
-            if not (is_bull or is_bear): return None
-            xa = abs(pA[2] - pX[2])
-            if xa == 0: return None
-            b_ratio = abs(pA[2] - pB[2]) / xa
-            d_ratio = (pA[2] - d_price) / xa if is_bull else (d_price - pA[2]) / xa
-            direction = "Yükseliş / Boğa" if is_bull else "Düşüş / Ayı"
-            prefix = "Bullish" if is_bull else "Bearish"
-
-            for name, b_min, b_max, d_target, d_tol, icon, rate in PATTERNS:
-                if (b_min <= b_ratio <= b_max) and abs(d_ratio - d_target) <= d_tol:
-                    return f"{icon} {prefix} {name} ({direction}) (%{rate} Başarı)"
-            return None
-
-        if len(pivots) >= 5 and (len(df) - 1 - pivots[-1][0]) <= 6:
-            res = eval_xabcd(pivots[-5], pivots[-4], pivots[-3], pivots[-2], pivots[-1][2])
-            if res: return res
-        if len(pivots) >= 4:
-            res = eval_xabcd(pivots[-4], pivots[-3], pivots[-2], pivots[-1], closes[-1])
-            if res: return res
-        return "Harmonik Formasyon Yok"
-    except Exception:
-        return "Harmonik Formasyon Yok"
 
 def detect_ict_smc_models(df: pd.DataFrame) -> str:
     if df is None or len(df) < 25:
@@ -473,7 +381,7 @@ def calculate_strong_sr(df: pd.DataFrame, idx: int = -1, lookback: int = 60, min
     except Exception:
         return None, None, 0.0, 0.0
 
-def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str, harmonic_pat: str = "Harmonik Formasyon Yok", woodie: dict = None):
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, d_sup: float, d_res: float, candle_pat: str, dusen_trend: str, yeni_trend: str):
     try:
         vol = df['Volume'].squeeze()
         curr_vol = float(vol.iloc[idx])
@@ -504,17 +412,10 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
         if rvol >= 1.1:
             puan += 1
         if sig_type == "BUY":
-            if ("Boğa" in candle_pat) or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend) or ("Boğa" in harmonic_pat):
+            if ("Boğa" in candle_pat) or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend):
                 puan += 1
         else:
-            if ("Ayı" in candle_pat) or ("Aşağı Kırıldı" in dusen_trend) or ("Düşük Dipler" in yeni_trend) or ("Ayı" in harmonic_pat):
-                puan += 1
-
-        curr_price = float(df['Close'].iloc[idx])
-        if woodie:
-            if sig_type == "BUY" and curr_price >= woodie["P"]:
-                puan += 1
-            elif sig_type == "SELL" and curr_price <= woodie["P"]:
+            if ("Ayı" in candle_pat) or ("Aşağı Kırıldı" in dusen_trend) or ("Düşük Dipler" in yeni_trend):
                 puan += 1
 
         puan = min(puan, 5)
@@ -524,7 +425,7 @@ def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi
     except Exception:
         return "⚪ Normal", "⭐⭐⭐ (3/5)"
 
-def evaluate_eco_crypto(df: pd.DataFrame, df_htf: pd.DataFrame, symbol: str, tf_label: str, pivot_label: str, ss_multi: dict):
+def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict):
     df = clean_df(df)
     if df.empty or len(df) < 15:
         return None
@@ -578,13 +479,10 @@ def evaluate_eco_crypto(df: pd.DataFrame, df_htf: pd.DataFrame, symbol: str, tf_
 
     dusen_trend, yeni_trend = detect_diagonal_trendline_and_initiation(df)
     candle_pat = detect_candlestick_patterns(df)
-    harmonic_pat = detect_harmonic_patterns(df)
     smc_model = detect_ict_smc_models(df)
-    
-    woodie = calculate_woodie_pivot_htf(df_htf, candle_price)
 
     sup, res, d_sup, d_res = calculate_strong_sr(df, target_idx)
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend, harmonic_pat, woodie)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, d_sup, d_res, candle_pat, dusen_trend, yeni_trend)
 
     ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
     ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
@@ -594,18 +492,8 @@ def evaluate_eco_crypto(df: pd.DataFrame, df_htf: pd.DataFrame, symbol: str, tf_
     if sup is not None and res is not None:
         sr_metni = (
             f"\n\n<b>🎯 Kuvvetli Destek & Direnç:</b>\n"
-            f"▫️ <b>Ana Destek:</b> ${fmt_price(sup)} (<code>{d_sup:+.1f}%</code>)\n"
-            f"▫️ <b>Ana Direnç:</b> ${fmt_price(res)} (<code>{d_res:+.1f}%</code>)"
-        )
-
-    woodie_metni = ""
-    if woodie:
-        p_durum = "Üzerinde (Boğa)" if candle_price >= woodie["P"] else "Altında (Ayı)"
-        woodie_metni = (
-            f"\n\n<b>📐 Woodie Pivot Seviyeleri ({pivot_label}):</b>\n"
-            f"▫️ <b>Pivot (P):</b> ${fmt_price(woodie['P'])} (<code>{woodie['dist_P']:+.1f}%</code>) - {p_durum}\n"
-            f"▫️ <b>Dirençler:</b> R1: ${fmt_price(woodie['R1'])} | R2: ${fmt_price(woodie['R2'])}\n"
-            f"▫️ <b>Destekler:</b> S1: ${fmt_price(woodie['S1'])} | S2: ${fmt_price(woodie['S2'])}"
+            f"▫️ <b>Ana Destek:</b> ${sup:,.4f} (<code>{d_sup:+.1f}%</code>)\n"
+            f"▫️ <b>Ana Direnç:</b> ${res:,.4f} (<code>{d_res:+.1f}%</code>)"
         )
 
     tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
@@ -615,21 +503,19 @@ def evaluate_eco_crypto(df: pd.DataFrame, df_htf: pd.DataFrame, symbol: str, tf_
         f"🪙 <b>Koin:</b> <a href=\"{tv_link}\">#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
         f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
         f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-        f"💵 <b>Fiyat:</b> ${fmt_price(candle_price)}\n\n"
+        f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n\n"
         f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
         f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
         f"<b>🕯️ Formasyon & Trend Teyitleri:</b>\n"
         f"▫️ <b>Düşen Trend Kırılımı:</b> {dusen_trend}\n"
         f"▫️ <b>Trend Başlatma Durumu:</b> {yeni_trend}\n"
         f"▫️ <b>Mum Formasyonu:</b> {candle_pat}\n"
-        f"▫️ <b>Harmonik Formasyon:</b> {harmonic_pat}\n"
         f"▫️ <b>ICT / SMC Modeli:</b> {smc_model}\n\n"
         f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
         f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
         f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
         f"▫️ <b>4 Saat (4h):</b> {ss_4h_k} Kanal | {ss_4h_n} Nokta"
         f"{sr_metni}"
-        f"{woodie_metni}"
     )
 
 def scan_coin(symbol: str):
@@ -638,14 +524,6 @@ def scan_coin(symbol: str):
         df_15m = get_binance_klines(symbol, "15m")
         df_1h = get_binance_klines(symbol, "1h")
         df_4h = get_binance_klines(symbol, "4h")
-        
-        # TradingView Pivot kaynakları:
-        # <=15m grafikleri -> 1D (Günlük)
-        # >15m grafikleri (1h, 4h) -> 1W (Haftalık)
-        df_1d = get_binance_klines(symbol, "1d")
-        df_1w = get_binance_klines(symbol, "1w")
-
-        df_htf_week = df_1w if (df_1w is not None and len(df_1w) >= 2) else df_1d
 
         ss_multi = {
             "15m": calculate_slingshot(df_15m, -1),
@@ -653,17 +531,8 @@ def scan_coin(symbol: str):
             "4h": calculate_slingshot(df_4h, -1)
         }
 
-        # 15m taraması -> TradingView 15m grafiğindeki Günlük (1D) Woodie Pivot
-        s15m = evaluate_eco_crypto(df_15m, df_1d, symbol, "15 Dakika (15m)", "Günlük (1D)", ss_multi)
+        s15m = evaluate_eco_crypto(df_15m, symbol, "15 Dakika (15m)", ss_multi)
         if s15m: signals.append(s15m)
-
-        # 1h taraması -> TradingView 1h grafiğindeki Haftalık (1W) Woodie Pivot
-        s1h = evaluate_eco_crypto(df_1h, df_htf_week, symbol, "1 Saat (1h)", "Haftalık (1W)", ss_multi)
-        if s1h: signals.append(s1h)
-
-        # 4h taraması -> TradingView 4h grafiğindeki Haftalık (1W) Woodie Pivot
-        s4h = evaluate_eco_crypto(df_4h, df_htf_week, symbol, "4 Saat (4h)", "Haftalık (1W)", ss_multi)
-        if s4h: signals.append(s4h)
 
     except Exception as e:
         print(f"{symbol} analiz hatası: {e}")
@@ -671,15 +540,14 @@ def scan_coin(symbol: str):
 
 def main():
     all_signals = []
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(scan_coin, c): c for c in COINS}
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {executor.submit(scan_coin, coin): coin for coin in COINS}
         for future in as_completed(futures):
             try:
-                res = future.result()
-                if res: all_signals.extend(res)
+                results = future.result()
+                if results: all_signals.extend(results)
             except Exception as e:
-                print(f"Kripto analiz hatası: {e}")
-
+                print(f"Koin analiz hatası: {e}")
     for i, sig in enumerate(all_signals):
         send_telegram(sig)
         if i < len(all_signals) - 1:
