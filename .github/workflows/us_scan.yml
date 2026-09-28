@@ -3,9 +3,9 @@ name: ABD Borsası Evan Cabral Tarayıcı
 on:
   workflow_dispatch:
   schedule:
-    # Türkiye saatiyle 16:30 - 23:00 arası her saat 20 geçe ve 50 geçelerde çalışır
-    # TSİ 16:50 = 13:50 UTC, TSİ 22:50 = 19:50 UTC
-    - cron: '20,50 13-19 * * 1-5'
+    # Türkiye saatiyle 16:30 - 23:00 arası her saatin 5, 20, 35 ve 50. dakikalarında çalışır (Pazartesi - Cuma)
+    # 13:00 - 19:59 UTC (TSİ 16:00 - 22:59)
+    - cron: '5,20,35,50 13-19 * * 1-5'
 
 jobs:
   us_tarama:
@@ -29,3 +29,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python us_main.py
+        
