@@ -147,7 +147,6 @@ def calculate_woodie_pivots(df_daily: pd.DataFrame) -> dict:
         prev_low = float(df['Low'].iloc[-2])
         curr_open = float(df['Open'].iloc[-1])
 
-        # TradingView Woodie Formülü
         p = (prev_high + prev_low + 2.0 * curr_open) / 4.0
         r1 = 2.0 * p - prev_low
         s1 = 2.0 * p - prev_high
@@ -239,18 +238,66 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         upper_wick = h - np.maximum(o, c)
         lower_wick = np.minimum(o, c) - l
 
+        # 1. ÇOKLU MUM FORMASYONLARI (4-5 MUM)
         if is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]:
             return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş / Boğa) (%84 Başarı)"
-        if is_bull[2] and is_bull[3] and is_bull[4] and c[4] > c[3] > c[2] and o[3] > o[2] and o[4] > o[3] and (upper_wick[2:] / cr[2:] < 0.25).all():
-            return "🛡️ Three White Soldiers - Üç Beyaz Asker (Yükseliş Dönüş / Boğa) (%82 Başarı)"
-        if is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l[1:4]) >= l[0]:
+        
+        if is_bull[1] and is_bull[2] and is_bull[3] and is_bear[4] and c[3] > c[2] > c[1] and o[4] >= c[3] and c[4] <= o[1]:
+            return "⚔️ Bearish Three-Line Strike (Düşüş Dönüş / Ayı) (%71 Başarı)"
+
+        if is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l[1:4]) >= l[0] and max(h[1:4]) <= h[4]:
             return "📈 Rising Three Methods - Yükselen Üç Yöntem (Yükseliş Devam / Boğa) (%78 Başarı)"
-        if is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2:
-            return "⭐ Morning Doji Star - Sabah Yıldızı (Yükseliş Dönüş / Boğa) (%76 Başarı)"
+
+        if is_bear[0] and body[0]/cr[0] > 0.4 and is_bear[4] and c[4] < l[0] and max(h[1:4]) <= h[0] and min(l[1:4]) >= l[4]:
+            return "📉 Falling Three Methods - Düşen Üç Yöntem (Düşüş Devam / Ayı) (%71 Başarı)"
+
+        # 2. ÜÇLÜ MUM FORMASYONLARI (3 MUM)
+        if is_bull[2] and is_bull[3] and is_bull[4] and c[4] > c[3] > c[2] and o[3] > o[2] and o[4] > o[3] and (upper_wick[2:] / cr[2:] < 0.25).all():
+            return "🛡 Three White Soldiers - Üç Beyaz Asker (Yükseliş Dönüş / Boğa) (%82 Başarı)"
+
         if is_bear[2] and is_bear[3] and is_bear[4] and c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and (lower_wick[2:] / cr[2:] < 0.25).all():
             return "🦅 Three Black Crows - Üç Kara Karga (Düşüş Dönüş / Ayı) (%79 Başarı)"
+
+        if is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2:
+            return "⭐ Morning Doji Star - Sabah Yıldızı (Yükseliş Dönüş / Boğa) (%76 Başarı)"
+
         if is_bull[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o[2] + c[2])/2:
             return "🌙 Evening Doji Star - Akşam Yıldızı (Düşüş Dönüş / Ayı) (%72 Başarı)"
+
+        # 3. İKİLİ MUM FORMASYONLARI (2 MUM)
+        if is_bull[3] and is_bear[4] and o[4] >= c[3] and c[4] <= o[3] and body[4]/cr[4] > 0.4:
+            return "🔴 Bearish Engulfing - Yutan Ayı (Düşüş Dönüş / Ayı) (%79 Başarı)"
+
+        if is_bear[3] and is_bull[4] and o[4] <= c[3] and c[4] >= o[3] and body[4]/cr[4] > 0.4:
+            return "🟢 Bullish Engulfing - Yutan Boğa (Yükseliş Dönüş / Boğa) (%63 Başarı)"
+
+        if is_bear[3] and is_bull[4] and body[3]/cr[3] > 0.35 and o[4] <= c[3] and c[4] > (o[3] + c[3])/2 and c[4] < o[3]:
+            return "⚡ Piercing Line - Delen Mum (Yükseliş Dönüş / Boğa) (%64 Başarı)"
+
+        if is_bull[3] and is_bear[4] and body[3]/cr[3] > 0.35 and o[4] >= c[3] and c[4] < (o[3] + c[3])/2 and c[4] > o[3]:
+            return "☁️ Dark Cloud Cover - Kara Bulut (Düşüş Dönüş / Ayı) (%60 Başarı)"
+
+        if is_bear[3] and is_bull[4] and abs(l[4] - l[3])/cr[4] < 0.06 and lower_wick[3]/cr[3] > 0.25 and lower_wick[4]/cr[4] > 0.25:
+            return "🧲 Tweezer Bottom - Cımbız Dip (Yükseliş Dönüş / Boğa) (%60 Başarı)"
+
+        if is_bull[3] and is_bear[4] and abs(h[4] - h[3])/cr[4] < 0.06 and upper_wick[3]/cr[3] > 0.25 and upper_wick[4]/cr[4] > 0.25:
+            return "🧲 Tweezer Top - Cımbız Tepe (Düşüş Dönüş / Ayı) (%60 Başarı)"
+
+        # 4. TEK MUM FORMASYONLARI (1 MUM)
+        if body[4]/cr[4] < 0.1 and upper_wick[4]/cr[4] > 0.65 and lower_wick[4]/cr[4] < 0.1:
+            return "🪦 Gravestone Doji - Mezar Taşı Doji (Düşüş Dönüş / Ayı) (%66 Başarı)"
+
+        if body[4]/cr[4] < 0.1 and lower_wick[4]/cr[4] > 0.65 and upper_wick[4]/cr[4] < 0.1:
+            return "🦗 Dragonfly Doji - Yusufçuk Doji (Yükseliş Dönüş / Boğa) (%65 Başarı)"
+
+        if is_bull[4] and upper_wick[4] >= 2.0 * body[4] and lower_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35 and c[3] <= c[2]:
+            return "🔨 Inverted Hammer - Ters Çekiç (Yükseliş Dönüş / Boğa) (%65 Başarı)"
+
+        if lower_wick[4] >= 2.0 * body[4] and upper_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35:
+            return "🔨 Hammer - Çekiç (Yükseliş Dönüş / Boğa) (%60 Başarı)"
+
+        if upper_wick[4] >= 2.0 * body[4] and lower_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35 and c[3] >= c[2]:
+            return "💫 Shooting Star - Kayan Yıldız (Düşüş Dönüş / Ayı) (%59 Başarı)"
 
         return "Standart Mum"
     except Exception:
@@ -355,6 +402,12 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
     else:
         return None
 
+    candle_pat = detect_candlestick_patterns(df)
+    
+    # Mum formasyonu oluşmamışsa (Standart Mum ise) telegrama gönderme
+    if candle_pat == "Standart Mum":
+        return None
+
     target_idx = -1
     candle_time = df.index[target_idx]
     candle_price = float(close.iloc[target_idx])
@@ -363,7 +416,6 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
     tv_link = f"https://tr.tradingview.com/chart/?symbol=BINANCE:{coin_name}USDT"
 
     dusen_trend, yeni_trend = detect_diagonal_trendline_and_initiation(df)
-    candle_pat = detect_candlestick_patterns(df)
     smc_model = detect_ict_smc_models(df)
     hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, candle_pat, dusen_trend, yeni_trend)
 
@@ -373,22 +425,28 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
 
     pivot_metni = ""
     if pivots and "P" in pivots:
-        p = pivots["P"]
-        dist_p = ((candle_price - p) / p) * 100
+        p = pivots.get("P", 0.0)
+        r1 = pivots.get("R1", 0.0)
+        r2 = pivots.get("R2", 0.0)
+        r3 = pivots.get("R3", 0.0)
+        s1 = pivots.get("S1", 0.0)
+        s2 = pivots.get("S2", 0.0)
+        s3 = pivots.get("S3", 0.0)
+        dist_p = ((candle_price - p) / p) * 100 if p > 0 else 0.0
         durum = "🟢 Pivot Üzerinde (Boğa)" if candle_price >= p else "🔴 Pivot Altında (Ayı)"
         pivot_metni = (
             f"\n\n<b>🎯 Pivot Noktaları Standart (Woodie - Günlük):</b>\n"
             f"▫️ <b>Konum:</b> {durum} (<code>{dist_p:+.2f}%</code>)\n"
             f"▫️ <b>Pivot (P):</b> ${p:,.4f}\n"
-            f"▫️ <b>Dirençler:</b> R1: ${pivots.get('R1', 0):,.4f} | R2: ${pivots.get('R2', 0):,.4f} | R3: ${pivots.get('R3', 0):,.4f}\n"
-            f"▫️ <b>Destekler:</b> S1: ${pivots.get('S1', 0):,.4f} | S2: ${pivots.get('S2', 0):,.4f} | S3: ${pivots.get('S3', 0):,.4f}"
+            f"▫️ <b>Dirençler:</b> R1: ${r1:,.4f} | R2: ${r2:,.4f} | R3: ${r3:,.4f}\n"
+            f"▫️ <b>Destekler:</b> S1: ${s1:,.4f} | S2: ${s2:,.4f} | S3: ${s3:,.4f}"
         )
 
     tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
 
     return (
         f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
-        f"🪙 <b>Koin:</b> <a href=\"{tv_link}\">#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
+        f"🪙 <b>Koin:</b> <a href='{tv_link}'>#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
         f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
         f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
         f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n\n"
@@ -420,7 +478,6 @@ def scan_coin(symbol: str):
             "4h": calculate_slingshot(df_4h, -1)
         }
 
-        # TradingView Pivot Points Standard: 15m grafikte Auto anchor "1D" (Günlük) değerlerini kullanır.
         pivots = calculate_woodie_pivots(df_1d)
 
         s15m = evaluate_eco_crypto(df_15m, symbol, "15 Dakika (15m)", ss_multi, pivots=pivots)
