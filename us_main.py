@@ -223,18 +223,85 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         upper_wick = h - np.maximum(o, c)
         lower_wick = np.minimum(o, c) - l
 
+        # ==================== 1. ÇOKLU MUM FORMASYONLARI (4-5 MUM) ====================
+        # Bullish Three-Line Strike (%84)
         if is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]:
             return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş / Boğa) (%84 Başarı)"
-        if is_bull[2] and is_bull[3] and is_bull[4] and c[4] > c[3] > c[2] and o[3] > o[2] and o[4] > o[3] and (upper_wick[2:] / cr[2:] < 0.25).all():
-            return "🛡️ Three White Soldiers - Üç Beyaz Asker (Yükseliş Dönüş / Boğa) (%82 Başarı)"
-        if is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l[1:4]) >= l[0]:
+        
+        # Bearish Three-Line Strike (%71)
+        if is_bull[1] and is_bull[2] and is_bull[3] and is_bear[4] and c[3] > c[2] > c[1] and o[4] >= c[3] and c[4] <= o[1]:
+            return "⚔️ Bearish Three-Line Strike (Düşüş Dönüş / Ayı) (%71 Başarı)"
+
+        # Rising Three Methods (%78)
+        if is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l[1:4]) >= l[0] and max(h[1:4]) <= h[4]:
             return "📈 Rising Three Methods - Yükselen Üç Yöntem (Yükseliş Devam / Boğa) (%78 Başarı)"
-        if is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2:
-            return "⭐ Morning Doji Star - Sabah Yıldızı (Yükseliş Dönüş / Boğa) (%76 Başarı)"
+
+        # Falling Three Methods (%71)
+        if is_bear[0] and body[0]/cr[0] > 0.4 and is_bear[4] and c[4] < l[0] and max(h[1:4]) <= h[0] and min(l[1:4]) >= l[4]:
+            return "📉 Falling Three Methods - Düşen Üç Yöntem (Düşüş Devam / Ayı) (%71 Başarı)"
+
+        # ==================== 2. ÜÇLÜ MUM FORMASYONLARI (3 MUM) ====================
+        # Three White Soldiers (%82)
+        if is_bull[2] and is_bull[3] and is_bull[4] and c[4] > c[3] > c[2] and o[3] > o[2] and o[4] > o[3] and (upper_wick[2:] / cr[2:] < 0.25).all():
+            return "🛡 Three White Soldiers - Üç Beyaz Asker (Yükseliş Dönüş / Boğa) (%82 Başarı)"
+
+        # Three Black Crows (%79)
         if is_bear[2] and is_bear[3] and is_bear[4] and c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and (lower_wick[2:] / cr[2:] < 0.25).all():
             return "🦅 Three Black Crows - Üç Kara Karga (Düşüş Dönüş / Ayı) (%79 Başarı)"
+
+        # Morning Doji Star (%76)
+        if is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2:
+            return "⭐ Morning Doji Star - Sabah Yıldızı (Yükseliş Dönüş / Boğa) (%76 Başarı)"
+
+        # Evening Doji Star (%72)
         if is_bull[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o[2] + c[2])/2:
             return "🌙 Evening Doji Star - Akşam Yıldızı (Düşüş Dönüş / Ayı) (%72 Başarı)"
+
+        # ==================== 3. İKİLİ MUM FORMASYONLARI (2 MUM) ====================
+        # Bearish Engulfing (%79)
+        if is_bull[3] and is_bear[4] and o[4] >= c[3] and c[4] <= o[3] and body[4]/cr[4] > 0.4:
+            return "🔴 Bearish Engulfing - Yutan Ayı (Düşüş Dönüş / Ayı) (%79 Başarı)"
+
+        # Bullish Engulfing (%63)
+        if is_bear[3] and is_bull[4] and o[4] <= c[3] and c[4] >= o[3] and body[4]/cr[4] > 0.4:
+            return "🟢 Bullish Engulfing - Yutan Boğa (Yükseliş Dönüş / Boğa) (%63 Başarı)"
+
+        # Piercing Line (%64)
+        if is_bear[3] and is_bull[4] and body[3]/cr[3] > 0.35 and o[4] <= c[3] and c[4] > (o[3] + c[3])/2 and c[4] < o[3]:
+            return "⚡ Piercing Line - Delen Mum (Yükseliş Dönüş / Boğa) (%64 Başarı)"
+
+        # Dark Cloud Cover (%60)
+        if is_bull[3] and is_bear[4] and body[3]/cr[3] > 0.35 and o[4] >= c[3] and c[4] < (o[3] + c[3])/2 and c[4] > o[3]:
+            return "☁️ Dark Cloud Cover - Kara Bulut (Düşüş Dönüş / Ayı) (%60 Başarı)"
+
+        # Tweezer Bottom (%60)
+        if is_bear[3] and is_bull[4] and abs(l[4] - l[3])/cr[4] < 0.06 and lower_wick[3]/cr[3] > 0.25 and lower_wick[4]/cr[4] > 0.25:
+            return "🧲 Tweezer Bottom - Cımbız Dip (Yükseliş Dönüş / Boğa) (%60 Başarı)"
+
+        # Tweezer Top (%60)
+        if is_bull[3] and is_bear[4] and abs(h[4] - h[3])/cr[4] < 0.06 and upper_wick[3]/cr[3] > 0.25 and upper_wick[4]/cr[4] > 0.25:
+            return "🧲 Tweezer Top - Cımbız Tepe (Düşüş Dönüş / Ayı) (%60 Başarı)"
+
+        # ==================== 4. TEK MUM FORMASYONLARI (1 MUM) ====================
+        # Gravestone Doji (%66)
+        if body[4]/cr[4] < 0.1 and upper_wick[4]/cr[4] > 0.65 and lower_wick[4]/cr[4] < 0.1:
+            return "🪦 Gravestone Doji - Mezar Taşı Doji (Düşüş Dönüş / Ayı) (%66 Başarı)"
+
+        # Dragonfly Doji (%65)
+        if body[4]/cr[4] < 0.1 and lower_wick[4]/cr[4] > 0.65 and upper_wick[4]/cr[4] < 0.1:
+            return "🦗 Dragonfly Doji - Yusufçuk Doji (Yükseliş Dönüş / Boğa) (%65 Başarı)"
+
+        # Inverted Hammer (%65)
+        if is_bull[4] and upper_wick[4] >= 2.0 * body[4] and lower_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35 and c[3] <= c[2]:
+            return "🔨 Inverted Hammer - Ters Çekiç (Yükseliş Dönüş / Boğa) (%65 Başarı)"
+
+        # Hammer (%60)
+        if lower_wick[4] >= 2.0 * body[4] and upper_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35:
+            return "🔨 Hammer - Çekiç (Yükseliş Dönüş / Boğa) (%60 Başarı)"
+
+        # Shooting Star (%59)
+        if upper_wick[4] >= 2.0 * body[4] and lower_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35 and c[3] >= c[2]:
+            return "💫 Shooting Star - Kayan Yıldız (Düşüş Dönüş / Ayı) (%59 Başarı)"
 
         return "Standart Mum"
     except Exception:
@@ -374,133 +441,7 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict, p
     if age_minutes > 120:
         return None
 
-    candle_price = float(close.iloc[target_idx])
-    time_str = candle_time.strftime('%H:%M')
-    tv_link = f"https://tr.tradingview.com/chart/?symbol={symbol}"
-
-    dusen_trend, yeni_trend = detect_diagonal_trendline_and_initiation(df)
     candle_pat = detect_candlestick_patterns(df)
-    smc_model = detect_ict_smc_models(df)
-
-    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, candle_pat, dusen_trend, yeni_trend)
-
-    ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
-    ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
-    ss_4h_k, ss_4h_n = ss_multi.get("4h", ("Belirsiz", "Belirsiz"))
-
-    pivot_metni = ""
-    if pivots and "P" in pivots:
-        p = pivots["P"]
-        p_label = pivots.get("label", "Günlük")
-        dist_p = ((candle_price - p) / p) * 100
-        durum = "🟢 Pivot Üzerinde (Boğa)" if candle_price >= p else "🔴 Pivot Altında (Ayı)"
-        pivot_metni = (
-            f"\n\n<b>🎯 Pivot Noktaları Standart (Woodie - {p_label}):</b>\n"
-            f"▫️ <b>Konum:</b> {durum} (<code>{dist_p:+.2f}%</code>)\n"
-            f"▫️ <b>Pivot (P):</b> ${p:,.2f}\n"
-            f"▫️ <b>Dirençler:</b> R1: ${pivots.get('R1', 0):,.2f} | R2: ${pivots.get('R2', 0):,.2f} | R3: ${pivots.get('R3', 0):,.2f}\n"
-            f"▫️ <b>Destekler:</b> S1: ${pivots.get('S1', 0):,.2f} | S2: ${pivots.get('S2', 0):,.2f} | S3: ${pivots.get('S3', 0):,.2f}"
-        )
-
-    tag = "🟢 <b>ABD BORSASI AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>ABD BORSASI SAT SİNYALİ</b>"
-
-    return (
-        f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
-        f"📌 <b>Hisse:</b> <a href=\"{tv_link}\">#{symbol}</a> <i>(Grafiği Aç)</i>\n"
-        f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
-        f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-        f"💵 <b>Fiyat:</b> ${candle_price:,.2f}\n\n"
-        f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
-        f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
-        f"<b>🕯️ Formasyon & Trend Teyitleri:</b>\n"
-        f"▫️ <b>Düşen Trend Kırılımı:</b> {dusen_trend}\n"
-        f"▫️ <b>Trend Başlatma Durumu:</b> {yeni_trend}\n"
-        f"▫️ <b>Mum Formasyonu:</b> {candle_pat}\n"
-        f"▫️ <b>ICT / SMC Modeli:</b> {smc_model}\n\n"
-        f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
-        f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
-        f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
-        f"▫️ <b>4 Saat (4h):</b> {ss_4h_k} Kanal | {ss_4h_n} Nokta"
-        f"{pivot_metni}"
-    )
-
-def scan_ticker(symbol: str):
-    signals = []
-    try:
-        df_15m = yf.download(symbol, period="5d", interval="15m", progress=False)
-        clean_15m = clean_df(df_15m)
-        df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
-        clean_1h = clean_df(df_1h)
-        df_30m = yf.download(symbol, period="1mo", interval="30m", progress=False)
-        clean_30m = clean_df(df_30m)
-
-        df_4h = clean_1h.resample("4h").agg({
-            'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
-        }).dropna()
-
-        # Günlük ve Haftalık Veriler (Pivot Hesaplaması İçin)
-        df_daily = yf.download(symbol, period="1mo", interval="1d", progress=False)
-        clean_daily = clean_df(df_daily)
-        if clean_daily.empty or len(clean_daily) < 2:
-            clean_daily = clean_1h.resample('1D').agg({
-                'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
-            }).dropna()
-
-        ss_multi = {
-            "15m": calculate_slingshot(clean_15m, -1),
-            "1h": calculate_slingshot(clean_1h, -1),
-            "4h": calculate_slingshot(df_4h, -1)
-        }
-
-        # TradingView Pivot Points Standard Mantığı:
-        # 15m (<= 15m) için Günlük / 1D anchor
-        pivots_15m = calculate_woodie_pivots(clean_daily, label="Günlük / 1D")
-
-        # 30m için Auto modunda Haftalık (1W), Daily modunda Günlük (1D)
-        if PIVOT_ANCHOR_MODE == "Daily":
-            pivots_30m = calculate_woodie_pivots(clean_daily, label="Günlük / 1D")
-        else:
-            df_weekly = yf.download(symbol, period="3mo", interval="1wk", progress=False)
-            clean_weekly = clean_df(df_weekly)
-            if clean_weekly.empty or len(clean_weekly) < 2:
-                clean_weekly = clean_daily.resample('W-FRI').agg({
-                    'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
-                }).dropna()
-            pivots_30m = calculate_woodie_pivots(clean_weekly, label="Haftalık / 1W")
-
-        # 15 Dakika (15m) canlı mum taraması
-        s15m = evaluate_eco(clean_15m, symbol, "15 Dakika (15m)", ss_multi, pivots=pivots_15m)
-        if s15m: 
-            signals.append(s15m)
-
-        # 30 Dakika (30m) canlı mum taraması
-        s30m = evaluate_eco(clean_30m, symbol, "30 Dakika (30m)", ss_multi, pivots=pivots_30m)
-        if s30m: 
-            signals.append(s30m)
-
-    except Exception as e:
-        print(f"{symbol} analiz hatası: {e}")
-    return signals
-
-def main():
-    now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
-    if now_tsi.hour < 16 or (now_tsi.hour == 16 and now_tsi.minute < 20) or now_tsi.hour >= 23:
-        print(f"ABD Seansı Kapalı (Saat: {now_tsi.strftime('%H:%M')} TSİ). Tarama yapılmıyor.")
-        return
-    all_signals = []
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(scan_ticker, ticker): ticker for ticker in US_TICKERS}
-        for future in as_completed(futures):
-            try:
-                results = future.result()
-                if results: 
-                    all_signals.extend(results)
-            except Exception as e:
-                print(f"Hisse analiz hatası: {e}")
-    for i, sig in enumerate(all_signals):
-        send_telegram(sig)
-        if i < len(all_signals) - 1:
-            time.sleep(1.5)
-
-if __name__ == "__main__":
-    main()
+    
+    # Mum formasyonu oluşmamışsa (Standart Mum ise) telegrama bildirim iletme
+    if cand
