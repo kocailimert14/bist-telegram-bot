@@ -445,4 +445,120 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict, p
     if pivots and "P" in pivots:
         p = pivots.get("P", 0.0)
         p_label = pivots.get("label", "Günlük")
-     
+        r1 = pivots.get("R1", 0.0)
+        r2 = pivots.get("R2", 0.0)
+        r3 = pivots.get("R3", 0.0)
+        s1 = pivots.get("S1", 0.0)
+        s2 = pivots.get("S2", 0.0)
+        s3 = pivots.get("S3", 0.0)
+        dist_p = ((candle_price - p) / p) * 100 if p > 0 else 0.0
+        durum = "🟢 Pivot Üzerinde (Boğa)" if candle_price >= p else "🔴 Pivot Altında (Ayı)"
+        pivot_metni = (
+            f"\n\n<b>🎯 Pivot Noktaları Standart (Woodie - {p_label}):</b>\n"
+            f"▫️ <b>Konum:</b> {durum} (<code>{dist_p:+.2f}%</code>)\n"
+            f"▫️ <b>Pivot (P):</b> ${p:,.2f}\n"
+            f"▫️ <b>Dirençler:</b> R1: ${r1:,.2f} | R2: ${r2:,.2f} | R3: ${r3:,.2f}\n"
+            f"▫️️ <b>Destekler:</b> S1: ${s1:,.2f} | S2: ${s2:,.2f} | S3: ${s3:,.2f}"
+        )
+
+    tag = "🟢 <b>ABD BORSASI AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>ABD BORSASI SAT SİNYALİ</b>"
+
+    return (
+        f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
+        f"📌 <b>Hisse:</b> <a href='{tv_link}'>#{symbol}</a> <i>(Grafiği Aç)</i>\n"
+        f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
+        f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
+        f"💵 <b>Fiyat:</b> ${candle_price:,.2f}\n\n"
+        f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
+        f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
+        f"<b>🕯️ Formasyon & Trend Teyitleri:</b>\n"
+        f"▫️ <b>Düşen Trend Kırılımı:</b> {dusen_trend}\n"
+        f"▫️️ <b>Trend Başlatma Durumu:</b> {yeni_trend}\n"
+        f"▫️ <b>Mum Formasyonu:</b> {candle_pat}\n"
+        f"▫️ <b>ICT / SMC Modeli:</b> {smc_model}\n\n"
+        f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
+        f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
+        f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
+        f"▫️ <b>4 Saat (4h):</b> {ss_4h_k} Kanal | {ss_4h_n} Nokta"
+        f"{pivot_metni}"
+    )
+
+def scan_ticker(symbol: str):
+    signals = []
+    try:
+        df_15m = yf.download(symbol, period="5d", interval="15m", progress=False)
+        clean_15m = clean_df(df_15m)
+        df_1h = yf.download(symbol, period="2mo", interval="1h", progress=False)
+        clean_1h = clean_df(df_1h)
+        df_30m = yf.download(symbol, period="1mo", interval="30m", progress=False)
+        clean_30m = clean_df(df_30m)
+
+        df_4h = clean_1h.resample("4h").agg({
+            'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
+        }).dropna()
+
+        # Günlük ve Haftalık Veriler (Pivot Hesaplaması İçin)
+        df_daily = yf.download(symbol, period="1mo", interval="1d", progress=False)
+        clean_daily = clean_df(df_daily)
+        if clean_daily.empty or len(clean_daily) < 2:
+            clean_daily = clean_1h.resample('1D').agg({
+                'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
+            }).dropna()
+
+        df_weekly = yf.download(symbol, period="3mo", interval="1wk", progress=False)
+        clean_weekly = clean_df(df_weekly)
+        if clean_weekly.empty or len(clean_weekly) < 2:
+            clean_weekly = clean_1h.resample('1W').agg({
+                'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
+            }).dropna()
+
+        ss_multi = {
+            "15m": calculate_slingshot(clean_15m, -1),
+            "1h": calculate_slingshot(clean_1h, -1),
+            "4h": calculate_slingshot(df_4h, -1)
+        }
+
+        # TradingView Pivot Points Standard Mantığı:
+        pivots_daily = calculate_woodie_pivots(clean_daily, label="Günlük")
+        pivots_weekly = calculate_woodie_pivots(clean_weekly, label="Haftalık")
+
+        pivots_15m = pivots_daily
+        pivots_30m = pivots_weekly if PIVOT_ANCHOR_MODE == "Auto" else pivots_daily
+
+        s15m = evaluate_eco(clean_15m, symbol, "15 Dakika (15m)", ss_multi, pivots=pivots_15m)
+        if s15m: 
+            signals.append(s15m)
+
+        s30m = evaluate_eco(clean_30m, symbol, "30 Dakika (30m)", ss_multi, pivots=pivots_30m)
+        if s30m: 
+            signals.append(s30m)
+
+    except Exception as e:
+        print(f"{symbol} analiz hatası: {e}")
+    return signals
+
+def main():
+    now_tsi = pd.Timestamp.now(tz="Europe/Istanbul")
+    # ABD Seansı (16:30 - 23:00 TSİ) kontrolü
+    if now_tsi.hour < 16 or (now_tsi.hour == 16 and now_tsi.minute < 20) or now_tsi.hour >= 23:
+        print(f"ABD Seansı Kapalı (Saat: {now_tsi.strftime('%H:%M')} TSİ). Tarama yapılmıyor.")
+        return
+
+    all_signals = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(scan_ticker, ticker): ticker for ticker in US_TICKERS}
+        for future in as_completed(futures):
+            try:
+                results = future.result()
+                if results: 
+                    all_signals.extend(results)
+            except Exception as e:
+                print(f"Hisse analiz hatası: {e}")
+
+    for i, sig in enumerate(all_signals):
+        send_telegram(sig)
+        if i < len(all_signals) - 1:
+            time.sleep(1.5)
+
+if __name__ == "__main__":
+    main()
