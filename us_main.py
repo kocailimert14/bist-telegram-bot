@@ -223,83 +223,64 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         upper_wick = h - np.maximum(o, c)
         lower_wick = np.minimum(o, c) - l
 
-        # ==================== 1. ÇOKLU MUM FORMASYONLARI (4-5 MUM) ====================
-        # Bullish Three-Line Strike (%84)
+        # 1. ÇOKLU MUM FORMASYONLARI (4-5 MUM)
         if is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]:
             return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş / Boğa) (%84 Başarı)"
         
-        # Bearish Three-Line Strike (%71)
         if is_bull[1] and is_bull[2] and is_bull[3] and is_bear[4] and c[3] > c[2] > c[1] and o[4] >= c[3] and c[4] <= o[1]:
             return "⚔️ Bearish Three-Line Strike (Düşüş Dönüş / Ayı) (%71 Başarı)"
 
-        # Rising Three Methods (%78)
         if is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l[1:4]) >= l[0] and max(h[1:4]) <= h[4]:
             return "📈 Rising Three Methods - Yükselen Üç Yöntem (Yükseliş Devam / Boğa) (%78 Başarı)"
 
-        # Falling Three Methods (%71)
         if is_bear[0] and body[0]/cr[0] > 0.4 and is_bear[4] and c[4] < l[0] and max(h[1:4]) <= h[0] and min(l[1:4]) >= l[4]:
             return "📉 Falling Three Methods - Düşen Üç Yöntem (Düşüş Devam / Ayı) (%71 Başarı)"
 
-        # ==================== 2. ÜÇLÜ MUM FORMASYONLARI (3 MUM) ====================
-        # Three White Soldiers (%82)
+        # 2. ÜÇLÜ MUM FORMASYONLARI (3 MUM)
         if is_bull[2] and is_bull[3] and is_bull[4] and c[4] > c[3] > c[2] and o[3] > o[2] and o[4] > o[3] and (upper_wick[2:] / cr[2:] < 0.25).all():
             return "🛡 Three White Soldiers - Üç Beyaz Asker (Yükseliş Dönüş / Boğa) (%82 Başarı)"
 
-        # Three Black Crows (%79)
         if is_bear[2] and is_bear[3] and is_bear[4] and c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and (lower_wick[2:] / cr[2:] < 0.25).all():
             return "🦅 Three Black Crows - Üç Kara Karga (Düşüş Dönüş / Ayı) (%79 Başarı)"
 
-        # Morning Doji Star (%76)
         if is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2:
             return "⭐ Morning Doji Star - Sabah Yıldızı (Yükseliş Dönüş / Boğa) (%76 Başarı)"
 
-        # Evening Doji Star (%72)
         if is_bull[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o[2] + c[2])/2:
             return "🌙 Evening Doji Star - Akşam Yıldızı (Düşüş Dönüş / Ayı) (%72 Başarı)"
 
-        # ==================== 3. İKİLİ MUM FORMASYONLARI (2 MUM) ====================
-        # Bearish Engulfing (%79)
+        # 3. İKİLİ MUM FORMASYONLARI (2 MUM)
         if is_bull[3] and is_bear[4] and o[4] >= c[3] and c[4] <= o[3] and body[4]/cr[4] > 0.4:
             return "🔴 Bearish Engulfing - Yutan Ayı (Düşüş Dönüş / Ayı) (%79 Başarı)"
 
-        # Bullish Engulfing (%63)
         if is_bear[3] and is_bull[4] and o[4] <= c[3] and c[4] >= o[3] and body[4]/cr[4] > 0.4:
             return "🟢 Bullish Engulfing - Yutan Boğa (Yükseliş Dönüş / Boğa) (%63 Başarı)"
 
-        # Piercing Line (%64)
         if is_bear[3] and is_bull[4] and body[3]/cr[3] > 0.35 and o[4] <= c[3] and c[4] > (o[3] + c[3])/2 and c[4] < o[3]:
             return "⚡ Piercing Line - Delen Mum (Yükseliş Dönüş / Boğa) (%64 Başarı)"
 
-        # Dark Cloud Cover (%60)
         if is_bull[3] and is_bear[4] and body[3]/cr[3] > 0.35 and o[4] >= c[3] and c[4] < (o[3] + c[3])/2 and c[4] > o[3]:
             return "☁️ Dark Cloud Cover - Kara Bulut (Düşüş Dönüş / Ayı) (%60 Başarı)"
 
-        # Tweezer Bottom (%60)
         if is_bear[3] and is_bull[4] and abs(l[4] - l[3])/cr[4] < 0.06 and lower_wick[3]/cr[3] > 0.25 and lower_wick[4]/cr[4] > 0.25:
             return "🧲 Tweezer Bottom - Cımbız Dip (Yükseliş Dönüş / Boğa) (%60 Başarı)"
 
-        # Tweezer Top (%60)
         if is_bull[3] and is_bear[4] and abs(h[4] - h[3])/cr[4] < 0.06 and upper_wick[3]/cr[3] > 0.25 and upper_wick[4]/cr[4] > 0.25:
             return "🧲 Tweezer Top - Cımbız Tepe (Düşüş Dönüş / Ayı) (%60 Başarı)"
 
-        # ==================== 4. TEK MUM FORMASYONLARI (1 MUM) ====================
-        # Gravestone Doji (%66)
+        # 4. TEK MUM FORMASYONLARI (1 MUM)
         if body[4]/cr[4] < 0.1 and upper_wick[4]/cr[4] > 0.65 and lower_wick[4]/cr[4] < 0.1:
             return "🪦 Gravestone Doji - Mezar Taşı Doji (Düşüş Dönüş / Ayı) (%66 Başarı)"
 
-        # Dragonfly Doji (%65)
         if body[4]/cr[4] < 0.1 and lower_wick[4]/cr[4] > 0.65 and upper_wick[4]/cr[4] < 0.1:
             return "🦗 Dragonfly Doji - Yusufçuk Doji (Yükseliş Dönüş / Boğa) (%65 Başarı)"
 
-        # Inverted Hammer (%65)
         if is_bull[4] and upper_wick[4] >= 2.0 * body[4] and lower_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35 and c[3] <= c[2]:
             return "🔨 Inverted Hammer - Ters Çekiç (Yükseliş Dönüş / Boğa) (%65 Başarı)"
 
-        # Hammer (%60)
         if lower_wick[4] >= 2.0 * body[4] and upper_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35:
             return "🔨 Hammer - Çekiç (Yükseliş Dönüş / Boğa) (%60 Başarı)"
 
-        # Shooting Star (%59)
         if upper_wick[4] >= 2.0 * body[4] and lower_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35 and c[3] >= c[2]:
             return "💫 Shooting Star - Kayan Yıldız (Düşüş Dönüş / Ayı) (%59 Başarı)"
 
@@ -444,4 +425,24 @@ def evaluate_eco(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict, p
     candle_pat = detect_candlestick_patterns(df)
     
     # Mum formasyonu oluşmamışsa (Standart Mum ise) telegrama bildirim iletme
-    if cand
+    if candle_pat == "Standart Mum":
+        return None
+
+    candle_price = float(close.iloc[target_idx])
+    time_str = candle_time.strftime('%H:%M')
+    tv_link = f"https://tr.tradingview.com/chart/?symbol={symbol}"
+
+    dusen_trend, yeni_trend = detect_diagonal_trendline_and_initiation(df)
+    smc_model = detect_ict_smc_models(df)
+
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, candle_pat, dusen_trend, yeni_trend)
+
+    ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
+    ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
+    ss_4h_k, ss_4h_n = ss_multi.get("4h", ("Belirsiz", "Belirsiz"))
+
+    pivot_metni = ""
+    if pivots and "P" in pivots:
+        p = pivots.get("P", 0.0)
+        p_label = pivots.get("label", "Günlük")
+     
