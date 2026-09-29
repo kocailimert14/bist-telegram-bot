@@ -404,7 +404,7 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
 
     candle_pat = detect_candlestick_patterns(df)
     
-    # Mum formasyonu oluşmamışsa (Standart Mum ise) telegrama gönderme
+    # Mum formasyonu oluşmamışsa (Standart Mum ise) telegrama bildirim iletme
     if candle_pat == "Standart Mum":
         return None
 
@@ -413,7 +413,7 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
     candle_price = float(close.iloc[target_idx])
     time_str = candle_time.strftime('%H:%M')
     coin_name = symbol.replace("USDT", "")
-    tv_link = f"https://tr.tradingview.com/chart/?symbol=BINANCE:{coin_name}USDT"
+    tv_link = "https://tr.tradingview.com/chart/?symbol=BINANCE:" + coin_name + "USDT"
 
     dusen_trend, yeni_trend = detect_diagonal_trendline_and_initiation(df)
     smc_model = detect_ict_smc_models(df)
@@ -432,4 +432,77 @@ def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: 
         s1 = pivots.get("S1", 0.0)
         s2 = pivots.get("S2", 0.0)
         s3 = pivots.get("S3", 0.0)
-        dist_p 
+   dist_p = ((candle_price - p) / p) * 100 if p > 0 else 0.0
+        durum = "🟢 Pivot Üzerinde (Boğa)" if candle_price >= p else "🔴 Pivot Altında (Ayı)"
+        pivot_metni = (
+            f"\n\n<b>🎯 Pivot Noktaları Standart (Woodie - Günlük):</b>\n"
+            f"▫️ <b>Konum:</b> {durum} (<code>{dist_p:+.2f}%</code>)\n"
+            f"▫️ <b>Pivot (P):</b> ${p:,.4f}\n"
+            f"▫️ <b>Dirençler:</b> R1: ${r1:,.4f} | R2: ${r2:,.4f} | R3: ${r3:,.4f}\n"
+            f"▫️ <b>Destekler:</b> S1: ${s1:,.4f} | S2: ${s2:,.4f} | S3: ${s3:,.4f}"
+        )
+
+    tag = "🟢 <b>KRİPTO AL SİNYALİ</b>" if sig_type == "BUY" else "🔴 <b>KRİPTO SAT SİNYALİ</b>"
+
+    return (
+        f"{tag} <b>(Evan Cabral - ECO)</b>\n\n"
+        f"🪙 <b>Koin:</b> <a href='{tv_link}'>#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
+        f"⏱ <b>Zaman Dilimi:</b> {tf_label}\n"
+        f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
+        f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n\n"
+        f"<b>⭐ Sinyal Güven Puanı:</b> {skor_metni}\n"
+        f"<b>📊 Hacim Gücü:</b> {hacim_metni}\n\n"
+        f"<b>🕯️ Formasyon & Trend Teyitleri:</b>\n"
+        f"▫️ <b>Düşen Trend Kırılımı:</b> {dusen_trend}\n"
+        f"▫️ <b>Trend Başlatma Durumu:</b> {yeni_trend}\n"
+        f"▫️ <b>Mum Formasyonu:</b> {candle_pat}\n"
+        f"▫️ <b>ICT / SMC Modeli:</b> {smc_model}\n\n"
+        f"<b>📈 Trend Teyitleri (SlingShot Multi-TF):</b>\n"
+        f"▫️ <b>15 Dakika (15m):</b> {ss_15m_k} Kanal | {ss_15m_n} Nokta\n"
+        f"▫️ <b>1 Saat (1h):</b> {ss_1h_k} Kanal | {ss_1h_n} Nokta\n"
+        f"▫️ <b>4 Saat (4h):</b> {ss_4h_k} Kanal | {ss_4h_n} Nokta"
+        f"{pivot_metni}"
+    )
+
+def scan_coin(symbol: str):
+    signals = []
+    try:
+        df_15m = get_binance_klines(symbol, "15m")
+        df_1h = get_binance_klines(symbol, "1h")
+        df_4h = get_binance_klines(symbol, "4h")
+        df_1d = get_binance_klines(symbol, "1d")
+
+        ss_multi = {
+            "15m": calculate_slingshot(df_15m, -1),
+            "1h": calculate_slingshot(df_1h, -1),
+            "4h": calculate_slingshot(df_4h, -1)
+        }
+
+        pivots = calculate_woodie_pivots(df_1d)
+
+        s15m = evaluate_eco_crypto(df_15m, symbol, "15 Dakika (15m)", ss_multi, pivots=pivots)
+        if s15m: 
+            signals.append(s15m)
+
+    except Exception as e:
+        print(f"{symbol} analiz hatası: {e}")
+    return signals
+
+def main():
+    all_signals = []
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {executor.submit(scan_coin, coin): coin for coin in COINS}
+        for future in as_completed(futures):
+            try:
+                results = future.result()
+                if results: 
+                    all_signals.extend(results)
+            except Exception as e:
+                print(f"Koin analiz hatası: {e}")
+    for i, sig in enumerate(all_signals):
+        send_telegram(sig)
+        if i < len(all_signals) - 1:
+            time.sleep(1.5)
+
+if __name__ == "__main__":
+    main()
