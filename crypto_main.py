@@ -95,9 +95,6 @@ def wwma(series: pd.Series, length: int) -> pd.Series:
     return pd.Series(res, index=series.index)
 
 def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
-res, index=series.index)
-
-def calculate_slingshot(df: pd.DataFrame, idx: int = -1):
     if df is None or len(df) < 15:
         return "Belirsiz", "Belirsiz"
     try:
@@ -243,5 +240,196 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
 
         # 1. ÇOKLU MUM FORMASYONLARI (4-5 MUM)
         if is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]:
-            return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş /
+            return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş / Boğa) (%84 Başarı)"
+        
+        if is_bull[1] and is_bull[2] and is_bull[3] and is_bear[4] and c[3] > c[2] > c[1] and o[4] >= c[3] and c[4] <= o[1]:
+            return "⚔️ Bearish Three-Line Strike (Düşüş Dönüş / Ayı) (%71 Başarı)"
+
+        if is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l[1:4]) >= l[0] and max(h[1:4]) <= h[4]:
+            return "📈 Rising Three Methods - Yükselen Üç Yöntem (Yükseliş Devam / Boğa) (%78 Başarı)"
+
+        if is_bear[0] and body[0]/cr[0] > 0.4 and is_bear[4] and c[4] < l[0] and max(h[1:4]) <= h[0] and min(l[1:4]) >= l[4]:
+            return "📉 Falling Three Methods - Düşen Üç Yöntem (Düşüş Devam / Ayı) (%71 Başarı)"
+
+        # 2. ÜÇLÜ MUM FORMASYONLARI (3 MUM)
+        if is_bull[2] and is_bull[3] and is_bull[4] and c[4] > c[3] > c[2] and o[3] > o[2] and o[4] > o[3] and (upper_wick[2:] / cr[2:] < 0.25).all():
+            return "🛡 Three White Soldiers - Üç Beyaz Asker (Yükseliş Dönüş / Boğa) (%82 Başarı)"
+
+        if is_bear[2] and is_bear[3] and is_bear[4] and c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and (lower_wick[2:] / cr[2:] < 0.25).all():
+            return "🦅 Three Black Crows - Üç Kara Karga (Düşüş Dönüş / Ayı) (%79 Başarı)"
+
+        if is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2:
+            return "⭐ Morning Doji Star - Sabah Yıldızı (Yükseliş Dönüş / Boğa) (%76 Başarı)"
+
+        if is_bull[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o[2] + c[2])/2:
+            return "🌙 Evening Doji Star - Akşam Yıldızı (Düşüş Dönüş / Ayı) (%72 Başarı)"
+
+        # 3. İKİLİ MUM FORMASYONLARI (2 MUM)
+        if is_bull[3] and is_bear[4] and o[4] >= c[3] and c[4] <= o[3] and body[4]/cr[4] > 0.4:
+            return "🔴 Bearish Engulfing - Yutan Ayı (Düşüş Dönüş / Ayı) (%79 Başarı)"
+
+        if is_bear[3] and is_bull[4] and o[4] <= c[3] and c[4] >= o[3] and body[4]/cr[4] > 0.4:
+            return "🟢 Bullish Engulfing - Yutan Boğa (Yükseliş Dönüş / Boğa) (%63 Başarı)"
+
+        if is_bear[3] and is_bull[4] and body[3]/cr[3] > 0.35 and o[4] <= c[3] and c[4] > (o[3] + c[3])/2 and c[4] < o[3]:
+            return "⚡ Piercing Line - Delen Mum (Yükseliş Dönüş / Boğa) (%64 Başarı)"
+
+        if is_bull[3] and is_bear[4] and body[3]/cr[3] > 0.35 and o[4] >= c[3] and c[4] < (o[3] + c[3])/2 and c[4] > o[3]:
+            return "☁️ Dark Cloud Cover - Kara Bulut (Düşüş Dönüş / Ayı) (%60 Başarı)"
+
+        if is_bear[3] and is_bull[4] and abs(l[4] - l[3])/cr[4] < 0.06 and lower_wick[3]/cr[3] > 0.25 and lower_wick[4]/cr[4] > 0.25:
+            return "🧲 Tweezer Bottom - Cımbız Dip (Yükseliş Dönüş / Boğa) (%60 Başarı)"
+
+        if is_bull[3] and is_bear[4] and abs(h[4] - h[3])/cr[4] < 0.06 and upper_wick[3]/cr[3] > 0.25 and upper_wick[4]/cr[4] > 0.25:
+            return "🧲 Tweezer Top - Cımbız Tepe (Düşüş Dönüş / Ayı) (%60 Başarı)"
+
+        # 4. TEK MUM FORMASYONLARI (1 MUM)
+        if body[4]/cr[4] < 0.1 and upper_wick[4]/cr[4] > 0.65 and lower_wick[4]/cr[4] < 0.1:
+            return "🪦 Gravestone Doji - Mezar Taşı Doji (Düşüş Dönüş / Ayı) (%66 Başarı)"
+
+        if body[4]/cr[4] < 0.1 and lower_wick[4]/cr[4] > 0.65 and upper_wick[4]/cr[4] < 0.1:
+            return "🦗 Dragonfly Doji - Yusufçuk Doji (Yükseliş Dönüş / Boğa) (%65 Başarı)"
+
+        if is_bull[4] and upper_wick[4] >= 2.0 * body[4] and lower_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35 and c[3] <= c[2]:
+            return "🔨 Inverted Hammer - Ters Çekiç (Yükseliş Dönüş / Boğa) (%65 Başarı)"
+
+        if lower_wick[4] >= 2.0 * body[4] and upper_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35:
+            return "🔨 Hammer - Çekiç (Yükseliş Dönüş / Boğa) (%60 Başarı)"
+
+        if upper_wick[4] >= 2.0 * body[4] and lower_wick[4]/cr[4] <= 0.15 and 0.1 <= body[4]/cr[4] <= 0.35 and c[3] >= c[2]:
+            return "💫 Shooting Star - Kayan Yıldız (Düşüş Dönüş / Ayı) (%59 Başarı)"
+
+        return "Standart Mum"
+    except Exception:
+        return "Standart Mum"
+
+def detect_ict_smc_models(df: pd.DataFrame) -> str:
+    if df is None or len(df) < 25:
+        return "Belirsiz"
+    try:
+        high, low, close, opens = df['High'].values, df['Low'].values, df['Close'].values, df['Open'].values
+        curr_c, curr_h, curr_l = close[-1], high[-1], low[-1]
+
+        swing_low = np.min(low[-16:-2])
+        if (low[-2] < swing_low and close[-2] > swing_low) or (curr_l < swing_low and curr_c > swing_low):
+            return "🧲 Liquidity Sweep / Turtle Soup (Tuzak Dip Temizlendi) (Boğa)"
+
+        swing_high = np.max(high[-16:-2])
+        if (high[-2] > swing_high and close[-2] < swing_high) or (curr_h > swing_high and curr_c < swing_high):
+            return "🧲 Buy-Side Liquidity Sweep (Tepe Likiditesi Alındı) (Ayı)"
+
+        if low[-2] > high[-4] and (high[-4] <= curr_l <= low[-2] or high[-4] <= curr_c <= low[-2]):
+            return "⚡ Bullish FVG (Dengesizlik Boşluğu Test Ediliyor) (Boğa)"
+        if high[-2] < low[-4] and (high[-2] <= curr_h <= low[-4] or high[-2] <= curr_c <= low[-4]):
+            return "⚡ Bearish FVG (Satış Dengesizliği Test Ediliyor) (Ayı)"
+
+        for i in range(2, 6):
+            if close[-i] > opens[-i] and (close[-i] - opens[-i]) > np.std(np.abs(close - opens)) * 1.5:
+                ob_idx = -(i + 1)
+                if low[ob_idx] <= curr_l <= high[ob_idx] or low[ob_idx] <= curr_c <= high[ob_idx]:
+                    return "🧱 Bullish Order Block (OB Kurumsal Alım Bölgesi) (Boğa)"
+
+        return "Normal Fiyat Yapısı"
+    except Exception:
+        return "Normal Fiyat Yapısı"
+
+def calculate_score_and_rvol(df: pd.DataFrame, idx: int, sig_type: str, ss_multi: dict, candle_pat: str, dusen_trend: str, yeni_trend: str):
+    try:
+        vol = df['Volume'].squeeze()
+        curr_vol = float(vol.iloc[idx])
+        avg_vol = float(vol.iloc[-21:-1].mean()) if len(vol) > 21 else float(vol.mean())
+        rvol = curr_vol / avg_vol if avg_vol > 0 else 1.0
+
+        if rvol >= 1.5:
+            hacim_metni = f"🚀 Çok Güçlü (Ortalamanın {rvol:.1f}x Katı)"
+        elif rvol >= 1.1:
+            hacim_metni = f"🟢 Güçlü (Ortalamanın {rvol:.1f}x Katı)"
+        elif rvol >= 0.8:
+            hacim_metni = f"⚪ Normal (Ortalamanın {rvol:.1f}x Katı)"
+        else:
+            hacim_metni = f"⚠️ Zayıf (Ortalamanın {rvol:.1f}x Katı)"
+
+        puan = 1
+        k1h, _ = ss_multi.get("1h", ("", ""))
+        k15, _ = ss_multi.get("15m", ("", ""))
+        if (sig_type == "BUY" and "Yeşil" in k1h) or (sig_type == "SELL" and "Kırmızı" in k1h):
+            puan += 1
+        if (sig_type == "BUY" and "Yeşil" in k15) or (sig_type == "SELL" and "Kırmızı" in k15):
+            puan += 1
+        if rvol >= 1.1:
+            puan += 1
+        if sig_type == "BUY":
+            if ("Boğa" in candle_pat) or ("Kırıldı" in dusen_trend) or ("Yeni Yükselen" in yeni_trend):
+                puan += 1
+        else:
+            if ("Ayı" in candle_pat) or ("Aşağı Kırıldı" in dusen_trend) or ("Düşük Dipler" in yeni_trend):
+                puan += 1
+
+        puan = min(puan, 5)
+        skor_metni = f"{'⭐' * puan} ({puan}/5)"
+        return hacim_metni, skor_metni
+    except Exception:
+        return "⚪ Normal", "⭐⭐⭐ (3/5)"
+
+def evaluate_eco_crypto(df: pd.DataFrame, symbol: str, tf_label: str, ss_multi: dict, pivots: dict = None):
+    df = clean_df(df)
+    if df.empty or len(df) < 15:
+        return None
+
+    high, low, close = df['High'].squeeze(), df['Low'].squeeze(), df['Close'].squeeze()
+    prev_close = close.shift(1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+
+    hiDiff = high - high.shift(1)
+    loDiff = low.shift(1) - low
+    plusDM = pd.Series(np.where((hiDiff > loDiff) & (hiDiff > 0), hiDiff, 0.0), index=df.index)
+    minusDM = pd.Series(np.where((loDiff > hiDiff) & (loDiff > 0), loDiff, 0.0), index=df.index)
+
+    ATR = wwma(tr, 10)
+    PlusDI = 100 * wwma(plusDM, 10) / ATR.replace(0, 1e-10)
+    MinusDI = 100 * wwma(minusDM, 10) / ATR.replace(0, 1e-10)
+    osc = PlusDI - MinusDI
+
+    hi = osc.rolling(window=3).max()
+    lo = osc.rolling(window=3).min()
+    stoch = (((osc - lo).rolling(window=3).sum() / (hi - lo).rolling(window=3).sum().replace(0, 1e-10)) * 100).clip(0, 100).ffill().fillna(50.0)
+
+    c_prev, c_curr = float(stoch.iloc[-2]), float(stoch.iloc[-1])
+    if c_prev < 10 and c_curr > 10:
+        sig_type = "BUY"
+    elif c_prev > 90 and c_curr < 90:
+        sig_type = "SELL"
+    else:
+        return None
+
+    candle_pat = detect_candlestick_patterns(df)
     
+    # Mum formasyonu oluşmamışsa (Standart Mum ise) telegrama gönderme
+    if candle_pat == "Standart Mum":
+        return None
+
+    target_idx = -1
+    candle_time = df.index[target_idx]
+    candle_price = float(close.iloc[target_idx])
+    time_str = candle_time.strftime('%H:%M')
+    coin_name = symbol.replace("USDT", "")
+    tv_link = f"https://tr.tradingview.com/chart/?symbol=BINANCE:{coin_name}USDT"
+
+    dusen_trend, yeni_trend = detect_diagonal_trendline_and_initiation(df)
+    smc_model = detect_ict_smc_models(df)
+    hacim_metni, skor_metni = calculate_score_and_rvol(df, target_idx, sig_type, ss_multi, candle_pat, dusen_trend, yeni_trend)
+
+    ss_15m_k, ss_15m_n = ss_multi.get("15m", ("Belirsiz", "Belirsiz"))
+    ss_1h_k, ss_1h_n = ss_multi.get("1h", ("Belirsiz", "Belirsiz"))
+    ss_4h_k, ss_4h_n = ss_multi.get("4h", ("Belirsiz", "Belirsiz"))
+
+    pivot_metni = ""
+    if pivots and "P" in pivots:
+        p = pivots.get("P", 0.0)
+        r1 = pivots.get("R1", 0.0)
+        r2 = pivots.get("R2", 0.0)
+        r3 = pivots.get("R3", 0.0)
+        s1 = pivots.get("S1", 0.0)
+        s2 = pivots.get("S2", 0.0)
+        s3 = pivots.get("S3", 0.0)
+        dist_p 
