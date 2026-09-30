@@ -489,6 +489,11 @@ def scan_coin(symbol: str):
     return signals
 
 def main():
+    print(f"🚀 Kripto taraması başlatıldı ({len(COINS)} koin)...")
+    
+    # TELEGRAM TESTİ: Botun canlı olduğunu doğrulamak için her çalıştığında test mesajı atar
+    send_telegram("🔔 <b>Bot Testi:</b> Kripto tarayıcısı çalıştı, Telegram bağlantısı aktif!")
+
     all_signals = []
     with ThreadPoolExecutor(max_workers=15) as executor:
         futures = {executor.submit(scan_coin, coin): coin for coin in COINS}
@@ -499,10 +504,15 @@ def main():
                     all_signals.extend(results)
             except Exception as e:
                 print(f"Koin analiz hatası: {e}")
-    for i, sig in enumerate(all_signals):
-        send_telegram(sig)
-        if i < len(all_signals) - 1:
-            time.sleep(1.5)
+
+    if all_signals:
+        print(f"🎯 Toplam {len(all_signals)} adet sinyal bulundu, Telegram'a gönderiliyor...")
+        for i, sig in enumerate(all_signals):
+            send_telegram(sig)
+            if i < len(all_signals) - 1:
+                time.sleep(1.5)
+    else:
+        print("✅ Tarama tamamlandı: Şu anki mumda kriterlere (ECO Kesişimi + Mum Formasyonu) uyan sinyal bulunamadı.")
 
 if __name__ == "__main__":
     main()
