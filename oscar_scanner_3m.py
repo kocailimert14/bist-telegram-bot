@@ -17,21 +17,17 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     print("UYARI: TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID ortam değişkeni tanımlı değil!")
 
 # ==========================================
-# QUANTFURY KRİPTO LİSTESİ (Binance USDT Pariteleri)
+# GÜNCELLENEN QUANTFURY KRİPTO LİSTESİ (36 Koin)
 # ==========================================
 QUANTFURY_COINS = [
-    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
-    "ADAUSDT", "AVAXUSDT", "LINKUSDT", "BCHUSDT", "LTCUSDT",
-    "NEARUSDT", "APTUSDT", "DOTUSDT", "TAOUSDT", "AAVEUSDT",
-    "RENDERUSDT", "INJUSDT", "ATOMUSDT", "ETCUSDT", "FILUSDT",
-    "HBARUSDT", "OPUSDT", "ARBUSDT", "UNIUSDT", "RUNEUSDT",
-    "ONDOUSDT", "POLUSDT", "SNXUSDT", "THETAUSDT", "MANAUSDT",
-    "SANDUSDT", "ZECUSDT", "SUIUSDT", "TIAUSDT", "SEIUSDT",
-    "FETUSDT", "PEPEUSDT", "SHIBUSDT", "WIFUSDT", "FLOKIUSDT",
-    "BONKUSDT", "ICPUSDT", "FTMUSDT", "XLMUSDT", "ALGOUSDT",
-    "VETUSDT", "GRTUSDT", "STXUSDT", "CRVUSDT", "DYDXUSDT",
-    "IMXUSDT", "GALAUSDT", "AXSUSDT", "CHZUSDT", "EOSUSDT",
-    "TRXUSDT", "BNBUSDT"
+    "AAVEUSDT", "ADAUSDT", "APTUSDT", "ARBUSDT", "ATOMUSDT",
+    "AVAXUSDT", "BCHUSDT", "BTCUSDT", "DOGEUSDT", "DOTUSDT",
+    "ETCUSDT", "ETHUSDT", "FILUSDT", "GRAMUSDT", "HBARUSDT",
+    "HYPEUSDT", "INJUSDT", "LINKUSDT", "LTCUSDT", "NEARUSDT",
+    "ONDOUSDT", "OPUSDT", "POLUSDT", "RENDERUSDT", "RUNEUSDT",
+    "SUSDT", "SANDUSDT", "SOLUSDT", "SUIUSDT", "TAOUSDT",
+    "THETAUSDT", "UNIUSDT", "VIRTUALUSDT", "XLMUSDT", "XRPUSDT",
+    "ZECUSDT"
 ]
 
 # ==========================================
@@ -198,7 +194,9 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         upper_wick = h - np.maximum(o, c)
         lower_wick = np.minimum(o, c) - l
 
-        # 1. BOĞA FORMASYONLARI
+        # ==========================================
+        # 1. EN YÜKSEK BAŞARI ORANLI YÜKSELİŞ (BOĞA) FORMASYONLARI
+        # ==========================================
         if (is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and 
             c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]):
             return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş / Boğa) (%84 Başarı)"
@@ -230,7 +228,9 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         if (lower_wick[4] >= 2 * body[4] and upper_wick[4] <= 0.15 * cr[4]):
             return "🔨 Hammer - Çekiç (Yükseliş Dönüş / Boğa) (%60 Başarı)"
 
-        # 2. AYI FORMASYONLARI
+        # ==========================================
+        # 2. EN YÜKSEK BAŞARI ORANLI DÜŞÜŞ (AYI) FORMASYONLARI
+        # ==========================================
         if (is_bear[2] and is_bear[3] and is_bear[4] and 
             c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and
             lower_wick[2]/cr[2] < 0.25 and lower_wick[3]/cr[3] < 0.25 and lower_wick[4]/cr[4] < 0.25):
