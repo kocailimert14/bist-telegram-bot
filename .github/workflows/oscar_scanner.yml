@@ -2,14 +2,14 @@ name: OSCAR 3m Telegram Scanner
 
 on:
   schedule:
-    # Her 20 dakikada bir otomatik çalışır
-    - cron: '*/20 * * * *'
-  workflow_dispatch: # Actions sekmesinden elle tek tıkla test başlatabilmeniz için
+    # Her 5 saatte bir yeni nöbeti başlatır
+    - cron: '0 */5 * * *'
+  workflow_dispatch: # İstediğiniz an tek tıkla başlatabilmeniz için
 
 jobs:
   oscar_scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 350
 
     steps:
       - name: Proje Kodunu Çek
@@ -26,9 +26,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: OSCAR 3m Tarayıcısını Çalıştır
+      - name: OSCAR 3m Tarayıcısını Çalıştır (5 Saat Kesintisiz)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python oscar_scanner_3m.py --loop --duration 18
+          # 300 dakika (5 saat) boyunca her 3 dakikada bir canlı tarar
+          python oscar_scanner_3m.py --loop --duration 300
