@@ -248,11 +248,12 @@ def scan_single_coin(symbol: str):
         SENT_SIGNALS.add(sig_key)
 
         coin_name = symbol.replace("USDT", "")
+        tv_url = f"https://www.tradingview.com/chart/?symbol=BINANCE:{symbol}"
         candle_patterns = detect_candlestick_patterns(df, idx=target_idx)
         pattern_str = f"🕯 <b>Formasyon:</b> {', '.join(candle_patterns)}\n" if candle_patterns else ""
 
         message = (
-            f"{signal_icon} <b>{coin_name}/USDT</b>\n"
+            f"{signal_icon} <a href=\"{tv_url}\"><b>{coin_name}/USDT</b></a>\n"
             f"🎯 <b>Sinyal:</b> {signal_title}\n"
             f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
             f"⏱ <b>Periyot:</b> 3 Dakika (3m)\n"
