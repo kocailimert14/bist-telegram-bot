@@ -14,10 +14,10 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    print("UYARI: TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID ortam değişkeni tanımlı değil!")
+    print("UYARI: TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID ortam deÄŸiÅŸkeni tanÄ±mlÄ± deÄŸil!")
 
 # ==========================================
-# GÜNCELLENEN QUANTFURY KRİPTO LİSTESİ (36 Koin)
+# GÃœNCELLENEN QUANTFURY KRÄ°PTO LÄ°STESÄ° (36 Koin)
 # ==========================================
 QUANTFURY_COINS = [
     "AAVEUSDT", "ADAUSDT", "APTUSDT", "ARBUSDT", "ATOMUSDT",
@@ -31,24 +31,24 @@ QUANTFURY_COINS = [
 ]
 
 # ==========================================
-# İNDİKATÖR PARAMETRELERİ (Görsellerdeki Ayarlar)
+# Ä°NDÄ°KATÃ–R PARAMETRELERÄ° (Yeni OSCAR v2 Kod AyarlarÄ±)
 # ==========================================
-OSCAR_LEN = 8                  # Oscar Candles
-OSCAR_SMOOTHING = "SMA"        # Oscar Smoothing: SMA
-SLOW_OSCAR_LEN = 16            # Slow Oscar Candles
-SLOW_OSCAR_SMOOTHING = "WMA"   # Slow Oscar Smoothing: WMA
-CROSS_SENSITIVITY = 1.5        # Cross Signal Sensitivity
-BOTTOM_SIGNAL_LINE = 35.0      # Bottom Signal Line
-TOP_SIGNAL_LINE = 65.0         # Top Signal Line
+OSCAR_LEN = 8                  # len = input(title="Oscar Candles", defval=8)
+SLOW_OSCAR_LEN = 16            # slowLen = input(title="Slow Oscar Candles", defval=16)
+OSCAR_SMOOTHING = "RMA"        # smoothing = input(title="Oscar Smoothing", defval="RMA", options=["RMA", "SMA", "EMA", "WMA", "NONE"])
+SLOW_OSCAR_SMOOTHING = "WMA"   # slowOscarSmoothing = input(title="Slow Oscar Smoothing", defval="WMA", options=["RMA", "SMA", "EMA", "WMA", "NONE"])
+CROSS_SENSITIVITY = 0.5        # crossSignalSensitivity = input(title="Cross Signal Sensitivity", defval=0.5, step=0.1)
+BOTTOM_SIGNAL_LINE = 35.0      # bottomSignalLine = input(title="Bottom Signal Line", defval=35, step=5)
+TOP_SIGNAL_LINE = 65.0         # topSignalLine = input(title="Top Signal Line", defval=65, step=5)
 
-# Tekrarlayan sinyalleri engellemek için hafıza
+# Tekrarlayan sinyalleri engellemek iÃ§in hafÄ±za
 SENT_SIGNALS = set()
 
 
 def send_telegram(message: str) -> bool:
-    """Telegram kanalına HTML formatında mesaj gönderir."""
+    """Telegram kanalÄ±na HTML formatÄ±nda mesaj gÃ¶nderir."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[Telegram Mesajı (Simülasyon)]:\n", message)
+        print("[Telegram MesajÄ± (SimÃ¼lasyon)]:\n", message)
         return True
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -64,18 +64,18 @@ def send_telegram(message: str) -> bool:
             return True
         elif res.status_code == 429:
             retry_after = res.json().get("parameters", {}).get("retry_after", 30)
-            print(f"Telegram Flood Uyarısı: {retry_after} sn beklenmeli!")
+            print(f"Telegram Flood UyarÄ±sÄ±: {retry_after} sn beklenmeli!")
             return False
         else:
-            print(f"Telegram hatası ({res.status_code}): {res.text}")
+            print(f"Telegram hatasÄ± ({res.status_code}): {res.text}")
             return False
     except Exception as e:
-        print(f"Telegram bağlantı hatası: {e}")
+        print(f"Telegram baÄŸlantÄ± hatasÄ±: {e}")
         return False
 
 
 def get_binance_klines(symbol: str, interval: str = "3m", limit: int = 100) -> pd.DataFrame:
-    """Binance Public API üzerinden mum verilerini çeker."""
+    """Binance Public API Ã¼zerinden mum verilerini Ã§eker."""
     url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
         res = requests.get(url, timeout=8)
@@ -88,7 +88,7 @@ def get_binance_klines(symbol: str, interval: str = "3m", limit: int = 100) -> p
                 ])
                 for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
                     df[col] = df[col].astype(float)
-                # Türkiye saati (UTC+3)
+                # TÃ¼rkiye saati (UTC+3)
                 df.index = pd.to_datetime(df['time'], unit='ms') + pd.Timedelta(hours=3)
                 return df
     except Exception:
@@ -114,57 +114,105 @@ def get_binance_klines(symbol: str, interval: str = "3m", limit: int = 100) -> p
     return pd.DataFrame()
 
 
+def pine_ma(smoothing: str, series: pd.Series, length: int) -> pd.Series:
+    """
+    Pine Script v4 ma() ve slowOscarMa() fonksiyonlarÄ±nÄ±n birebir karÅŸÄ±lÄ±ÄŸÄ±:
+    SeÃ§enekler: ["RMA", "SMA", "EMA", "WMA", "NONE"]
+    """
+    s_type = smoothing.upper()
+    if s_type == "SMA":
+        return series.rolling(window=length).mean()
+    elif s_type == "EMA":
+        return series.ewm(span=length, adjust=False).mean()
+    elif s_type == "WMA":
+        weights = np.arange(1, length + 1, dtype=float)
+        weight_sum = weights.sum()
+        return series.rolling(window=length).apply(lambda x: np.dot(x, weights) / weight_sum, raw=True)
+    elif s_type == "RMA":
+        # Pine Script rma(src, len): Wilder's Smoothing (alpha = 1 / len, ilk deÄŸer SMA ile baÅŸlar)
+        vals = series.values.astype(float)
+        out = np.full(len(vals), np.nan)
+        alpha = 1.0 / length
+        valid_indices = np.where(~np.isnan(vals))[0]
+        if len(valid_indices) >= length:
+            start_idx = valid_indices[length - 1]
+            out[start_idx] = np.mean(vals[valid_indices[:length]])
+            for i in range(start_idx + 1, len(vals)):
+                if np.isnan(vals[i]):
+                    out[i] = out[i - 1]
+                else:
+                    out[i] = alpha * vals[i] + (1.0 - alpha) * out[i - 1]
+        return pd.Series(out, index=series.index)
+    else:
+        # "NONE"
+        return series
+
+
 def calculate_oscar(df: pd.DataFrame):
     """
-    OSCAR İndikatörünün Pine Script ile birebir hesaplaması:
-    A = highest(close, len)
-    B = lowest(close, len)
-    OscarRough = (close - B) / (A - B) * 100
+    Yeni OSCAR v2 (Â© GenZai 30-07-2020 v2) Ä°ndikatÃ¶rÃ¼nÃ¼n Pine Script ile birebir hesaplamasÄ±:
+    A = highest(OscarOfIndicator, len)
+    B = lowest(OscarOfIndicator, len)
+    OscarRough = (OscarOfIndicator - B) / (A - B) * 100
     Oscar1 = (OscarRough[1] / 3) * 2
     OscarThird = OscarRough / 3
     Oscar = Oscar1 + OscarThird
-    smoothedOscarRough = sma(OscarRough, len)
-    smoothedOscar = sma(Oscar, len)
+    smoothedOscarRough = ma(smoothing, OscarRough, len)
+    smoothedOscar = ma(smoothing, Oscar, len)
     """
-    if df is None or len(df) < 25:
+    if df is None or len(df) < 35:
         return None
 
     close = df['Close']
+
+    # Fast Oscar
     a = close.rolling(window=OSCAR_LEN).max()
     b = close.rolling(window=OSCAR_LEN).min()
-
     denom = (a - b).replace(0, 1e-10)
     oscar_rough = (close - b) / denom * 100.0
 
-    oscar_rough_prev = oscar_rough.shift(1)
-    oscar = (oscar_rough_prev / 3.0) * 2.0 + (oscar_rough / 3.0)
+    oscar_1 = (oscar_rough.shift(1) / 3.0) * 2.0
+    oscar_third = oscar_rough / 3.0
+    oscar = oscar_1 + oscar_third
 
-    # Oscar Smoothing: SMA
-    smoothed_rough = oscar_rough.rolling(window=OSCAR_LEN).mean()
-    smoothed_oscar = oscar.rolling(window=OSCAR_LEN).mean()
+    smoothed_rough = pine_ma(OSCAR_SMOOTHING, oscar_rough, OSCAR_LEN)
+    smoothed_oscar = pine_ma(OSCAR_SMOOTHING, oscar, OSCAR_LEN)
 
-    cross_sens = (smoothed_rough - smoothed_oscar).abs()
+    # Slow Oscar
+    slow_a = close.rolling(window=SLOW_OSCAR_LEN).max()
+    slow_b = close.rolling(window=SLOW_OSCAR_LEN).min()
+    slow_denom = (slow_a - slow_b).replace(0, 1e-10)
+    slow_oscar_rough = (close - slow_b) / slow_denom * 100.0
 
-    # Kesişimler
+    slow_oscar_1 = (slow_oscar_rough.shift(1) / 3.0) * 2.0
+    slow_oscar_third = slow_oscar_rough / 3.0
+    slow_oscar = slow_oscar_1 + slow_oscar_third
+    smoothed_slow_oscar = pine_ma(SLOW_OSCAR_SMOOTHING, slow_oscar, SLOW_OSCAR_LEN)
+
+    # Cross Sensitivity
+    cross_sens = np.maximum(smoothed_rough, smoothed_oscar) - np.minimum(smoothed_rough, smoothed_oscar)
+
+    # KesiÅŸimler
     crossover = (smoothed_rough > smoothed_oscar) & (smoothed_rough.shift(1) <= smoothed_oscar.shift(1))
     crossunder = (smoothed_rough < smoothed_oscar) & (smoothed_rough.shift(1) >= smoothed_oscar.shift(1))
 
-    # 4 Ayrı Sinyal Şartı
-    # 1. Siyah Üçgen (Dip Kesişimi AL)
+    # 4 AyrÄ± Sinyal ÅartÄ±
+    # 1. Siyah ÃœÃ§gen (Dip KesiÅŸimi AL)
     sig_black_buy = crossover & (cross_sens > CROSS_SENSITIVITY) & (smoothed_rough < BOTTOM_SIGNAL_LINE)
 
-    # 2. Yeşil Ok (Alım Teyidi / Devam)
+    # 2. YeÅŸil Ok (AlÄ±m Teyidi / Devam)
     sig_green_buy = crossover.shift(1) & (cross_sens > CROSS_SENSITIVITY) & (smoothed_rough > smoothed_oscar) & (smoothed_oscar < BOTTOM_SIGNAL_LINE)
 
-    # 3. Siyah Ters Üçgen (Tepe Kırılımı SAT)
+    # 3. Siyah Ters ÃœÃ§gen (Tepe KÄ±rÄ±lÄ±mÄ± SAT)
     sig_black_sell = crossunder & (cross_sens > CROSS_SENSITIVITY) & (smoothed_rough > TOP_SIGNAL_LINE)
 
-    # 4. Kırmızı Ters Ok (Satım Teyidi / Devam)
+    # 4. KÄ±rmÄ±zÄ± Ters Ok (SatÄ±m Teyidi / Devam)
     sig_red_sell = crossunder.shift(1) & (cross_sens > CROSS_SENSITIVITY) & (smoothed_oscar > smoothed_rough) & (smoothed_oscar > TOP_SIGNAL_LINE)
 
     return {
         'smoothed_rough': smoothed_rough,
         'smoothed_oscar': smoothed_oscar,
+        'smoothed_slow_oscar': smoothed_slow_oscar,
         'cross_sens': cross_sens,
         'black_buy': sig_black_buy,
         'green_buy': sig_green_buy,
@@ -175,7 +223,7 @@ def calculate_oscar(df: pd.DataFrame):
 
 def detect_candlestick_patterns(df: pd.DataFrame) -> str:
     """
-    En yüksek istatistiksel başarı oranına sahip Boğa ve Ayı mum formasyonları.
+    En yÃ¼ksek istatistiksel baÅŸarÄ± oranÄ±na sahip BoÄŸa ve AyÄ± mum formasyonlarÄ±.
     """
     if df is None or len(df) < 5:
         return "Standart Mum"
@@ -195,71 +243,71 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
         lower_wick = np.minimum(o, c) - l
 
         # ==========================================
-        # 1. EN YÜKSEK BAŞARI ORANLI YÜKSELİŞ (BOĞA) FORMASYONLARI
+        # 1. EN YÃœKSEK BAÅARI ORANLI YÃœKSELÄ°Å (BOÄA) FORMASYONLARI
         # ==========================================
         if (is_bear[1] and is_bear[2] and is_bear[3] and is_bull[4] and 
             c[3] < c[2] < c[1] and o[4] <= c[3] and c[4] >= o[1]):
-            return "⚔️ Bullish Three-Line Strike (Yükseliş Dönüş / Boğa) (%84 Başarı)"
+            return "âš”ï¸ Bullish Three-Line Strike (YÃ¼kseliÅŸ DÃ¶nÃ¼ÅŸ / BoÄŸa) (%84 BaÅŸarÄ±)"
 
         if (is_bull[2] and is_bull[3] and is_bull[4] and 
             c[4] > c[3] > c[2] and o[3] > o[2] and o[4] > o[3] and
             upper_wick[2]/cr[2] < 0.25 and upper_wick[3]/cr[3] < 0.25 and upper_wick[4]/cr[4] < 0.25):
-            return "🛡️ Three White Soldiers - Üç Beyaz Asker (Yükseliş Dönüş / Boğa) (%82 Başarı)"
+            return "ğŸ›¡ï¸ Three White Soldiers - ÃœÃ§ Beyaz Asker (YÃ¼kseliÅŸ DÃ¶nÃ¼ÅŸ / BoÄŸa) (%82 BaÅŸarÄ±)"
 
         if (is_bull[0] and body[0]/cr[0] > 0.4 and is_bull[4] and c[4] > h[0] and min(l[1], l[2], l[3]) >= l[0]):
-            return "📈 Rising Three Methods - Yükselen Üç Yöntem (Yükseliş Devam / Boğa) (%78 Başarı)"
+            return "ğŸ“ˆ Rising Three Methods - YÃ¼kselen ÃœÃ§ YÃ¶ntem (YÃ¼kseliÅŸ Devam / BoÄŸa) (%78 BaÅŸarÄ±)"
 
         if (is_bear[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bull[4] and c[4] > (o[2] + c[2])/2):
-            return "⭐ Morning Doji Star - Sabah Yıldızı (Yükseliş Dönüş / Boğa) (%76 Başarı)"
+            return "â­ Morning Doji Star - Sabah YÄ±ldÄ±zÄ± (YÃ¼kseliÅŸ DÃ¶nÃ¼ÅŸ / BoÄŸa) (%76 BaÅŸarÄ±)"
 
         if (is_bear[2] and body[3]/cr[3] < 0.15 and is_bull[4] and h[3] < l[2] and l[4] > h[3] and c[4] > (o[2] + c[2])/2):
-            return "👶 Bullish Abandoned Baby - Terk Edilmiş Bebek (Yükseliş Dönüş / Boğa) (%75 Başarı)"
+            return "ğŸ‘¶ Bullish Abandoned Baby - Terk EdilmiÅŸ Bebek (YÃ¼kseliÅŸ DÃ¶nÃ¼ÅŸ / BoÄŸa) (%75 BaÅŸarÄ±)"
 
         if (is_bear[2] and is_bull[3] and o[3] <= c[2] and c[3] >= o[2] and is_bull[4] and c[4] > c[3]):
-            return "🟢 Three Outside Up (Yükseliş Dönüş / Boğa) (%72 Başarı)"
+            return "ğŸŸ¢ Three Outside Up (YÃ¼kseliÅŸ DÃ¶nÃ¼ÅŸ / BoÄŸa) (%72 BaÅŸarÄ±)"
 
         if (is_bear[3] and is_bull[4] and (body[3]/cr[3] > 0.35) and (body[4]/cr[4] > 0.35) and 
             abs(o[4] - o[3]) / o[3] <= 0.003 and c[4] > h[3]):
-            return "⚡ Bullish Separating Lines - Ayrılan Çizgiler (Yükseliş Devam / Boğa) (%68 Başarı)"
+            return "âš¡ Bullish Separating Lines - AyrÄ±lan Ã‡izgiler (YÃ¼kseliÅŸ Devam / BoÄŸa) (%68 BaÅŸarÄ±)"
 
         if (is_bear[3] and is_bull[4] and c[4] >= o[3] and o[4] <= c[3]):
-            return "🟢 Bullish Engulfing - Yutan Boğa (Dönüş / Boğa) (%63 Başarı)"
+            return "ğŸŸ¢ Bullish Engulfing - Yutan BoÄŸa (DÃ¶nÃ¼ÅŸ / BoÄŸa) (%63 BaÅŸarÄ±)"
 
         if (lower_wick[4] >= 2 * body[4] and upper_wick[4] <= 0.15 * cr[4]):
-            return "🔨 Hammer - Çekiç (Yükseliş Dönüş / Boğa) (%60 Başarı)"
+            return "ğŸ”¨ Hammer - Ã‡ekiÃ§ (YÃ¼kseliÅŸ DÃ¶nÃ¼ÅŸ / BoÄŸa) (%60 BaÅŸarÄ±)"
 
         # ==========================================
-        # 2. EN YÜKSEK BAŞARI ORANLI DÜŞÜŞ (AYI) FORMASYONLARI
+        # 2. EN YÃœKSEK BAÅARI ORANLI DÃœÅÃœÅ (AYI) FORMASYONLARI
         # ==========================================
         if (is_bear[2] and is_bear[3] and is_bear[4] and 
             c[4] < c[3] < c[2] and o[3] < o[2] and o[4] < o[3] and
             lower_wick[2]/cr[2] < 0.25 and lower_wick[3]/cr[3] < 0.25 and lower_wick[4]/cr[4] < 0.25):
-            return "🦅 Three Black Crows - Üç Kara Karga (Düşüş Dönüş / Ayı) (%79 Başarı)"
+            return "ğŸ¦… Three Black Crows - ÃœÃ§ Kara Karga (DÃ¼ÅŸÃ¼ÅŸ DÃ¶nÃ¼ÅŸ / AyÄ±) (%79 BaÅŸarÄ±)"
 
         if (is_bull[2] and body[3]/cr[3] < 0.15 and is_bear[4] and l[3] > h[2] and h[4] < l[3] and c[4] < (o[2] + c[2])/2):
-            return "👶 Bearish Abandoned Baby - Terk Edilmiş Bebek (Düşüş Dönüş / Ayı) (%75 Başarı)"
+            return "ğŸ‘¶ Bearish Abandoned Baby - Terk EdilmiÅŸ Bebek (DÃ¼ÅŸÃ¼ÅŸ DÃ¶nÃ¼ÅŸ / AyÄ±) (%75 BaÅŸarÄ±)"
 
         if (is_bull[2] and body[2]/cr[2] > 0.35 and body[3]/cr[3] < 0.3 and is_bear[4] and c[4] < (o[2] + c[2])/2):
-            return "🌙 Evening Doji Star - Akşam Yıldızı (Düşüş Dönüş / Ayı) (%72 Başarı)"
+            return "ğŸŒ™ Evening Doji Star - AkÅŸam YÄ±ldÄ±zÄ± (DÃ¼ÅŸÃ¼ÅŸ DÃ¶nÃ¼ÅŸ / AyÄ±) (%72 BaÅŸarÄ±)"
 
         if (is_bull[2] and is_bear[3] and o[3] >= c[2] and c[3] <= o[2] and is_bear[4] and c[4] < c[3]):
-            return "🔴 Three Outside Down (Düşüş Dönüş / Ayı) (%72 Başarı)"
+            return "ğŸ”´ Three Outside Down (DÃ¼ÅŸÃ¼ÅŸ DÃ¶nÃ¼ÅŸ / AyÄ±) (%72 BaÅŸarÄ±)"
 
         if (is_bear[0] and body[0]/cr[0] > 0.4 and is_bear[4] and c[4] < l[0] and max(h[1], h[2], h[3]) <= h[0]):
-            return "📉 Falling Three Methods - Düşen Üç Yöntem (Düşüş Devam / Ayı) (%71 Başarı)"
+            return "ğŸ“‰ Falling Three Methods - DÃ¼ÅŸen ÃœÃ§ YÃ¶ntem (DÃ¼ÅŸÃ¼ÅŸ Devam / AyÄ±) (%71 BaÅŸarÄ±)"
 
         if (is_bear[3] and is_bear[4] and h[3] < l[2] and c[4] < c[3] and o[4] <= o[3]):
-            return "🕰️ Two Black Gapping - Boşluklu İki Kırmızı (Düşüş Devam / Ayı) (%68 Başarı)"
+            return "ğŸ•°ï¸ Two Black Gapping - BoÅŸluklu Ä°ki KÄ±rmÄ±zÄ± (DÃ¼ÅŸÃ¼ÅŸ Devam / AyÄ±) (%68 BaÅŸarÄ±)"
 
         if (is_bull[1] and is_bull[2] and is_bull[3] and is_bear[4] and 
             c[3] > c[2] > c[1] and o[4] >= c[3] and c[4] <= o[1]):
-            return "⚔️ Bearish Three-Line Strike (Düşüş Dönüş / Ayı) (%65 Başarı)"
+            return "âš”ï¸ Bearish Three-Line Strike (DÃ¼ÅŸÃ¼ÅŸ DÃ¶nÃ¼ÅŸ / AyÄ±) (%65 BaÅŸarÄ±)"
 
         if (is_bull[3] and is_bear[4] and o[4] >= c[3] and c[4] <= o[3]):
-            return "🔴 Bearish Engulfing - Yutan Ayı (Dönüş / Ayı) (%63 Başarı)"
+            return "ğŸ”´ Bearish Engulfing - Yutan AyÄ± (DÃ¶nÃ¼ÅŸ / AyÄ±) (%63 BaÅŸarÄ±)"
 
         if (upper_wick[4] >= 2 * body[4] and lower_wick[4] <= 0.15 * cr[4]):
-            return "🌠 Shooting Star - Kayan Yıldız (Düşüş Dönüş / Ayı) (%60 Başarı)"
+            return "ğŸŒ  Shooting Star - Kayan YÄ±ldÄ±z (DÃ¼ÅŸÃ¼ÅŸ DÃ¶nÃ¼ÅŸ / AyÄ±) (%60 BaÅŸarÄ±)"
 
         return "Standart Mum"
     except Exception:
@@ -267,17 +315,17 @@ def detect_candlestick_patterns(df: pd.DataFrame) -> str:
 
 
 def scan_single_coin(symbol: str):
-    """Tek bir koini 3 dakikalık periyotta analiz eder ve sinyal varsa Telegram mesajı üretir."""
+    """Tek bir koini 3 dakikalÄ±k periyotta analiz eder ve sinyal varsa Telegram mesajÄ± Ã¼retir."""
     try:
-        df = get_binance_klines(symbol, interval="3m", limit=80)
-        if df.empty or len(df) < 25:
+        df = get_binance_klines(symbol, interval="3m", limit=100)
+        if df.empty or len(df) < 35:
             return None
 
         res = calculate_oscar(df)
         if res is None:
             return None
 
-        # Son tamamlanan muma bakılır
+        # Son tamamlanan muma bakÄ±lÄ±r
         target_idx = -1
         candle_time = df.index[target_idx]
         candle_price = float(df['Close'].iloc[target_idx])
@@ -294,25 +342,25 @@ def scan_single_coin(symbol: str):
 
         if b_buy:
             detected_signal = "BLACK_BUY"
-            signal_title = "⬛ Siyah Üçgen (Dip Kesişimi AL)"
-            signal_icon = "🟢"
+            signal_title = "â¬› Siyah ÃœÃ§gen (Dip KesiÅŸimi AL)"
+            signal_icon = "ğŸŸ¢"
         elif g_buy:
             detected_signal = "GREEN_BUY"
-            signal_title = "🟩 Yeşil Ok (Alım Teyidi / Devam)"
-            signal_icon = "🟢"
+            signal_title = "ğŸŸ© YeÅŸil Ok (AlÄ±m Teyidi / Devam)"
+            signal_icon = "ğŸŸ¢"
         elif b_sell:
             detected_signal = "BLACK_SELL"
-            signal_title = "⬛ Siyah Ters Üçgen (Tepe Kırılımı SAT)"
-            signal_icon = "🔴"
+            signal_title = "â¬› Siyah Ters ÃœÃ§gen (Tepe KÄ±rÄ±lÄ±mÄ± SAT)"
+            signal_icon = "ğŸ”´"
         elif r_sell:
             detected_signal = "RED_SELL"
-            signal_title = "🟥 Kırmızı Ok (Satım Teyidi / Devam)"
-            signal_icon = "🔴"
+            signal_title = "ğŸŸ¥ KÄ±rmÄ±zÄ± Ok (SatÄ±m Teyidi / Devam)"
+            signal_icon = "ğŸ”´"
 
         if not detected_signal:
             return None
 
-        # Aynı mum için tekrar sinyal atmayı engelle
+        # AynÄ± mum iÃ§in tekrar sinyal atmayÄ± engelle
         sig_key = (symbol, str(candle_time), detected_signal)
         if sig_key in SENT_SIGNALS:
             return None
@@ -325,13 +373,13 @@ def scan_single_coin(symbol: str):
         candle_pat = detect_candlestick_patterns(df)
 
         message = (
-            f"{signal_icon} <b>OSCAR İNDİKATÖR SİNYALİ</b>\n\n"
-            f"🪙 <b>Koin:</b> <a href=\"{tv_link}\">#{coin_name}/USDT</a> <i>(Grafiği Aç)</i>\n"
-            f"🎯 <b>Sinyal:</b> {signal_title}\n"
-            f"⏱ <b>Periyot:</b> 3 Dakika (3m)\n"
-            f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
-            f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n\n"
-            f"🕯️ <b>Mum Formasyonu:</b> {candle_pat}\n"
+            f"{signal_icon} <b>OSCAR Ä°NDÄ°KATÃ–R SÄ°NYALÄ°</b>\n\n"
+            f"ğŸª™ <b>Koin:</b> <a href=\"{tv_link}\">#{coin_name}/USDT</a> <i>(GrafiÄŸi AÃ§)</i>\n"
+            f"ğŸ¯ <b>Sinyal:</b> {signal_title}\n"
+            f"â± <b>Periyot:</b> 3 Dakika (3m)\n"
+            f"ğŸ•’ <b>Mum Saati:</b> <code>{time_str}</code> (TSÄ°)\n"
+            f"ğŸ’µ <b>Fiyat:</b> ${candle_price:,.4f}\n\n"
+            f"ğŸ•¯ï¸ <b>Mum Formasyonu:</b> {candle_pat}\n"
         )
         return message
 
@@ -340,10 +388,10 @@ def scan_single_coin(symbol: str):
 
 
 def run_scanner():
-    """Tüm Quantfury koinlerini paralel olarak tarar."""
+    """TÃ¼m Quantfury koinlerini paralel olarak tarar."""
     start_time = time.time()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n--- [{now_str}] OSCAR 3m Tarama Başlatıldı ({len(QUANTFURY_COINS)} Koin) ---")
+    print(f"\n--- [{now_str}] OSCAR 3m Tarama BaÅŸlatÄ±ldÄ± ({len(QUANTFURY_COINS)} Koin) ---")
 
     found_signals = 0
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -355,7 +403,7 @@ def run_scanner():
                 found_signals += 1
 
     elapsed = time.time() - start_time
-    print(f"Tarama tamamlandı! Bulunan Sinyal: {found_signals} | Süre: {elapsed:.2f} saniye")
+    print(f"Tarama tamamlandÄ±! Bulunan Sinyal: {found_signals} | SÃ¼re: {elapsed:.2f} saniye")
 
 
 if __name__ == "__main__":
@@ -370,13 +418,13 @@ if __name__ == "__main__":
             pass
 
     if is_loop:
-        dur_msg = f"({duration_minutes} dakika boyunca)" if duration_minutes else "(süresiz)"
-        print(f"OSCAR 3m Tarayıcı döngü modunda çalışıyor {dur_msg} - Her 3 dakikada bir kontrol...")
+        dur_msg = f"({duration_minutes} dakika boyunca)" if duration_minutes else "(sÃ¼resiz)"
+        print(f"OSCAR 3m TarayÄ±cÄ± dÃ¶ngÃ¼ modunda Ã§alÄ±ÅŸÄ±yor {dur_msg} - Her 3 dakikada bir kontrol...")
         start_ts = time.time()
         while True:
             run_scanner()
             if duration_minutes and (time.time() - start_ts) >= (duration_minutes * 60 - 10):
-                print(f"Belirlenen çalışma süresi ({duration_minutes} dakika) tamamlandı. Görev başarıyla sonlandırılıyor.")
+                print(f"Belirlenen Ã§alÄ±ÅŸma sÃ¼resi ({duration_minutes} dakika) tamamlandÄ±. GÃ¶rev baÅŸarÄ±yla sonlandÄ±rÄ±lÄ±yor.")
                 break
             time.sleep(180)  # 3 dakika bekle
     else:
