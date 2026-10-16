@@ -5,7 +5,6 @@ import numpy as np
 import requests
 import pandas as pd
 from datetime import datetime
-
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -14,8 +13,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # ==========================================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
 
 # ==========================================
 # QUANTFURY KRİPTO LİSTESİ (Binance USDT Pariteleri)
@@ -64,10 +61,12 @@ def send_telegram(message: str) -> bool:
             return True
         elif res.status_code == 429:
             retry_after = res.json().get("parameters", {}).get("retry_after", 30)
+            print(f"Rate limited. Retry after {retry_after}s")
             return False
         else:
             return False
     except Exception as e:
+        print(f"Telegram gönderme hatası: {e}")
         return False
 
 def get_binance_klines(symbol: str, interval: str = "3m", limit: int = 100) -> pd.DataFrame:
@@ -84,7 +83,7 @@ def get_binance_klines(symbol: str, interval: str = "3m", limit: int = 100) -> p
                 ])
                 for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
                     df[col] = df[col].astype(float)
-                # Türkiye saati (UTC+3)
+                df.index = pd.to_datetime(df['time'].astype(np.int64), unit='ms') + pd.Timedelta(hours=3)
                 return df
     except Exception:
         pass
@@ -134,41 +133,33 @@ def detect_candlestick_patterns(df: pd.DataFrame, idx: int = -1) -> list:
 
     # 1. Bullish Engulfing (Boğa Yutan)
     if p_close < p_open and c_close > c_open and c_close >= p_open and c_open <= p_close:
-
+        patterns.append("Bullish Engulfing")
     # 2. Bearish Engulfing (Ayı Yutan)
     if p_close > p_open and c_close < c_open and c_close <= p_open and c_open >= p_close:
-
+        patterns.append("Bearish Engulfing")
     # 3. Hammer (Çekiç)
     if c_lower_wick >= 2 * c_body and c_upper_wick <= c_body * 0.5 and c_body / c_range > 0.1:
-
+        patterns.append("Hammer")
     # 4. Shooting Star (Ters Çekiç / Kayan Yıldız)
     if c_upper_wick >= 2 * c_body and c_lower_wick <= c_body * 0.5 and c_body / c_range > 0.1:
-
+        patterns.append("Shooting Star")
     # 5. Doji
     if c_body / c_range <= 0.1:
-
+        patterns.append("Doji")
     # 6. Morning Star (Sabah Yıldızı)
     if (p2_close < p2_open and
         abs(p_close - p_open) / (p_high - p_low + 1e-10) < 0.3 and
         c_close > c_open and c_close > (p2_open + p2_close) / 2):
-
+        patterns.append("Morning Star")
     # 7. Evening Star (Akşam Yıldızı)
     if (p2_close > p2_open and
         abs(p_close - p_open) / (p_high - p_low + 1e-10) < 0.3 and
         c_close < c_open and c_close < (p2_open + p2_close) / 2):
+        patterns.append("Evening Star")
 
     return patterns
 
 def calculate_oscar(df: pd.DataFrame):
-    A = highest(close, len)
-    B = lowest(close, len)
-    OscarRough = (close - B) / (A - B) * 100
-    Oscar1 = (OscarRough[1] / 3) * 2
-    OscarThird = OscarRough / 3
-    Oscar = Oscar1 + OscarThird
-    smoothedOscarRough = sma(OscarRough, len)
-    smoothedOscar = sma(Oscar, len)
-    """
     if df is None or len(df) < 25:
         return None
 
@@ -182,7 +173,8 @@ def calculate_oscar(df: pd.DataFrame):
     oscar_rough_prev = oscar_rough.shift(1)
     oscar = (oscar_rough_prev / 3.0) * 2.0 + (oscar_rough / 3.0)
 
-    # Oscar Smoothing: SMA (Girdiler tabındaki ayar)
+    # Oscar Smoothing: SMA
+    smoothed_rough = oscar_rough.rolling(window=OSCAR_LEN).mean()
     smoothed_oscar = oscar.rolling(window=OSCAR_LEN).mean()
 
     cross_sens = (smoothed_rough - smoothed_oscar).abs()
@@ -192,13 +184,10 @@ def calculate_oscar(df: pd.DataFrame):
 
     # 4 Ayrı Sinyal Şartı
     sig_black_buy = crossover & (cross_sens > CROSS_SENSITIVITY) & (smoothed_rough < BOTTOM_SIGNAL_LINE)
-
-    # 2. Yeşil Ok (Alım Teyidi / Devam)
-
+    sig_green_buy = crossover.shift(1) & (cross_sens > CROSS_SENSITIVITY) & (smoothed_oscar < smoothed_rough) & (smoothed_oscar < BOTTOM_SIGNAL_LINE)
     sig_black_sell = crossunder & (cross_sens > CROSS_SENSITIVITY) & (smoothed_rough > TOP_SIGNAL_LINE)
-
-    # 4. Kırmızı Ters Ok (Satım Teyidi / Devam)
     sig_red_sell = crossunder.shift(1) & (cross_sens > CROSS_SENSITIVITY) & (smoothed_oscar > smoothed_rough) & (smoothed_oscar > TOP_SIGNAL_LINE)
+
     return {
         'smoothed_rough': smoothed_rough,
         'smoothed_oscar': smoothed_oscar,
@@ -219,7 +208,6 @@ def scan_single_coin(symbol: str):
         if res is None:
             return None
 
-        # Son tamamlanan muma bakılır (veya son anlık mum: index -1)
         target_idx = -1
         candle_time = df.index[target_idx]
         candle_price = float(df['Close'].iloc[target_idx])
@@ -236,68 +224,68 @@ def scan_single_coin(symbol: str):
 
         if b_buy:
             detected_signal = "BLACK_BUY"
+            signal_title = "Siyah Ok - Dip Alım Sinyali"
+            signal_icon = "🟢"
         elif g_buy:
             detected_signal = "GREEN_BUY"
+            signal_title = "Yeşil Ok - Alım Teyidi"
+            signal_icon = "✅"
         elif b_sell:
             detected_signal = "BLACK_SELL"
+            signal_title = "Siyah Ok - Tepe Satım Sinyali"
+            signal_icon = "🔴"
         elif r_sell:
             detected_signal = "RED_SELL"
+            signal_title = "Kırmızı Ok - Satım Teyidi"
+            signal_icon = "❌"
 
         if not detected_signal:
             return None
 
-        # Aynı mum için tekrar sinyal atmayı engelle
         sig_key = (symbol, str(candle_time), detected_signal)
         if sig_key in SENT_SIGNALS:
             return None
         SENT_SIGNALS.add(sig_key)
 
         coin_name = symbol.replace("USDT", "")
-
-        rough_val = float(res['smoothed_rough'].iloc[target_idx])
-        oscar_val = float(res['smoothed_oscar'].iloc[target_idx])
-        sens_val = float(res['cross_sens'].iloc[target_idx])
-
         candle_patterns = detect_candlestick_patterns(df, idx=target_idx)
-
-
+        pattern_str = f"🕯 <b>Formasyon:</b> {', '.join(candle_patterns)}\n" if candle_patterns else ""
 
         message = (
-
+            f"{signal_icon} <b>{coin_name}/USDT</b>\n"
             f"🎯 <b>Sinyal:</b> {signal_title}\n"
-
-
             f"🕒 <b>Mum Saati:</b> <code>{time_str}</code> (TSİ)\n"
             f"⏱ <b>Periyot:</b> 3 Dakika (3m)\n"
-
-            f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n\n"
-
+            f"💵 <b>Fiyat:</b> ${candle_price:,.4f}\n"
             f"{pattern_str}"
-
-
         )
         return message
-
     except Exception as e:
+        print(f"Error scanning {symbol}: {e}")
         return None
 
 def run_scanner():
     start_time = time.time()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     found_signals = 0
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_to_coin = {executor.submit(scan_single_coin, coin): coin for coin in QUANTFURY_COINS}
         for future in as_completed(future_to_coin):
-            msg = future.result()
-            if msg:
-                send_telegram(msg)
-                found_signals += 1
+            coin = future_to_coin[future]
+            try:
+                msg = future.result()
+                if msg:
+                    send_telegram(msg)
+                    found_signals += 1
+            except Exception as exc:
+                print(f"{coin} generated an exception: {exc}")
 
     elapsed = time.time() - start_time
-
+    print(f"Scan finished in {elapsed:.2f}s. Signals found: {found_signals}")
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Quantfury 3m Oscar Scanner")
+    parser.add_argument("--loop", action="store_true", help="Run continuously in a loop")
+    parser.add_argument("--duration", type=int, default=0, help="Loop duration in minutes")
     args = parser.parse_args()
 
     if args.loop or args.duration > 0:
